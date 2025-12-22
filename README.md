@@ -14,7 +14,7 @@ Last updated: 2025-12-10
 
 > E.g 
 
-<img width="1905" height="1086" alt="image" src="https://github.com/user-attachments/assets/5cd2776f-4606-45c2-9482-53ff2d4df74e" />
+<img width="1585" height="972" alt="image" src="https://github.com/user-attachments/assets/900004c3-a0fd-4c20-bdff-464b03fe30ea" />
 
 > [!IMPORTANT]
 > The deployment process typically takes 15-20 minutes
@@ -95,8 +95,8 @@ graph TD
    - Sets up A2A protocol infrastructure including event queues and monitoring.
 
       > E.g 
-      
-       <img width="1859" height="900" alt="image" src="https://github.com/user-attachments/assets/cd24ab7f-5ddd-46de-b266-0d0a24c45803" />
+  
+       <img width="1850" height="794" alt="image" src="https://github.com/user-attachments/assets/ed17ee51-f7fa-427f-a5d2-062ca3ab3c76" />
 
 2. **A2A Framework Deployment**:
    - Initializes the Agent-to-Agent protocol server components.
@@ -110,13 +110,11 @@ graph TD
 
         > E.g 
 
-        <https://github.com/user-attachments/assets/41bf0976-0ca8-47fe-a2fa-8750bcc6f848>
    
    - Creates and populates an Azure AI Search index with vector embeddings through A2A coordination.
 
         > E.g 
         
-        <https://github.com/user-attachments/assets/37c4a8cd-73e1-4392-8755-fb018481d8cb>
 
 4. **Enhanced Agent Creation & A2A Registration**:
    - Installs the `azure-ai-projects` SDK and Microsoft Agent Framework.
@@ -131,7 +129,6 @@ graph TD
 
       > E.g 
       
-      <img width="1881" height="1000" alt="image" src="https://github.com/user-attachments/assets/59a9dcaf-9291-403c-b8b0-1195c1375aac" />
 
 5. **Application Deployment**:
    - Builds the Docker container with A2A protocol support in the cloud (ACR Build).
@@ -149,7 +146,6 @@ graph TD
 
       > E.g 
       
-       <https://github.com/user-attachments/assets/a1139528-6b37-4ac2-a1cb-771788ff45a4>
 
 2. **Verify A2A Protocol Endpoints**:
    - Check A2A Chat API: `https://<your-app-name>.azurewebsites.net/a2a/chat`
@@ -167,7 +163,6 @@ graph TD
 
       > E.g 
       
-      <https://github.com/user-attachments/assets/3c562ccd-cff3-4a30-b9f8-44111fb71113>
 
 4. **Test Enhanced A2A Interactions**: For example:
    - **General**: "Hi, I need a thumbnail for my video."
