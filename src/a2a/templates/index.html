@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Zava Shopping Assistant</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0 0 10px 0;
+            font-size: 2.5rem;
+            font-weight: 700;
+        }
+        
+        .header p {
+            margin: 0;
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        .chat-container {
+            padding: 20px;
+            height: 400px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .message {
+            margin-bottom: 15px;
+            padding: 12px 16px;
+            border-radius: 18px;
+            max-width: 70%;
+            word-wrap: break-word;
+        }
+        
+        .user-message {
+            background: #007bff;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+        
+        .assistant-message {
+            background: white;
+            border: 1px solid #e9ecef;
+            color: #333;
+        }
+        
+        .agent-label {
+            font-size: 0.8rem;
+            opacity: 0.7;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+        
+        .input-container {
+            padding: 20px;
+            background: white;
+            display: flex;
+            gap: 10px;
+        }
+        
+        .input-field {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e9ecef;
+            border-radius: 25px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        
+        .input-field:focus {
+            border-color: #007bff;
+        }
+        
+        .send-button {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            transition: transform 0.2s;
+        }
+        
+        .send-button:hover {
+            transform: translateY(-1px);
+        }
+        
+        .send-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .status {
+            padding: 10px 20px;
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            margin: 10px 20px;
+            border-radius: 5px;
+            font-size: 0.9rem;
+        }
+        
+        .features {
+            padding: 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        .features h3 {
+            margin: 0 0 15px 0;
+            color: #495057;
+        }
+        
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .feature-card {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .feature-title {
+            font-weight: 600;
+            color: #007bff;
+            margin-bottom: 5px;
+        }
+        
+        .feature-desc {
+            font-size: 0.9rem;
+            color: #6c757d;
+        }
+        
+        /* Enhanced UX Features */
+        .typing-indicator {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            background: white;
+            border: 1px solid #e9ecef;
+            border-radius: 18px;
+            margin-bottom: 15px;
+            max-width: 70%;
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        .typing-dots {
+            display: flex;
+            gap: 4px;
+            margin-left: 8px;
+        }
+        
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #007bff;
+            animation: typing 1.5s infinite;
+        }
+        
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        
+        @keyframes typing {
+            0%, 60%, 100% {
+                transform: translateY(0);
+                opacity: 0.4;
+            }
+            30% {
+                transform: translateY(-10px);
+                opacity: 1;
+            }
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .message {
+            animation: fadeIn 0.3s ease-out;
+        }
+        
+        .connection-status {
+            padding: 8px 16px;
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            margin: 10px 20px;
+            border-radius: 5px;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .connection-status.disconnected {
+            background: #f8d7da;
+            border-color: #dc3545;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #28a745;
+        }
+        
+        .status-dot.disconnected {
+            background: #dc3545;
+        }
+        
+        .message-timestamp {
+            font-size: 0.75rem;
+            opacity: 0.6;
+            margin-top: 4px;
+        }
+        
+        .retry-button {
+            background: #17a2b8;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            margin-left: 10px;
+        }
+        
+        .message-actions {
+            display: none;
+            margin-top: 8px;
+            gap: 8px;
+        }
+        
+        .message:hover .message-actions {
+            display: flex;
+        }
+        
+        .action-btn {
+            background: none;
+            border: 1px solid #e9ecef;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+        
+        .action-btn:hover {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Enhanced Zava Shopping Assistant</h1>
+            <p>Multi-Agent AI Assistant using A2A Protocol</p>
+        </div>
+        
+        <div class="chat-container" id="chatContainer">
+            <div class="message assistant-message">
+                <div class="agent-label">🤖 Zava Assistant</div>
+                <div>Welcome! I'm your enhanced shopping assistant powered by multiple specialized AI agents. Ask me about interior design, product availability, your loyalty rewards, cart management, or general shopping questions!</div>
+                <div class="message-timestamp">Now</div>
+            </div>
+            <div class="status">
+                💡 <strong>Pro Tips:</strong> Use ↑ arrow to recall last message • Ctrl+Enter to send • Hover over messages for actions
+            </div>
+        </div>
+        
+        <div class="input-container">
+            <textarea class="input-field" id="messageInput" placeholder="Ask me about paint, design ideas, or anything else... (↑ for history, Ctrl+Enter to send)" autofocus rows="1" style="resize: none; overflow: hidden; min-height: 44px;"></textarea>
+            <button class="send-button" id="sendButton">Send</button>
+        </div>
+        
+        <div class="features">
+            <h3>🎯 Specialized Agents</h3>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-title">🎨 Interior Design</div>
+                    <div class="feature-desc">Get design advice, color recommendations, and styling tips</div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-title">📦 Inventory</div>
+                    <div class="feature-desc">Check product availability and stock levels</div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-title">🎁 Loyalty Rewards</div>
+                    <div class="feature-desc">View your discounts and loyalty benefits</div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-title">🛒 Cart Management</div>
+                    <div class="feature-desc">Add, remove, and manage your shopping cart</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class ZavaChat {
+            constructor() {
+                this.chatContainer = document.getElementById('chatContainer');
+                this.messageInput = document.getElementById('messageInput');
+                this.sendButton = document.getElementById('sendButton');
+                this.sessionId = this.generateSessionId();
+                this.messageHistory = [];
+                this.isConnected = true;
+                this.currentTypingIndicator = null;
+                this.retryAttempts = 0;
+                this.maxRetries = 3;
+                
+                this.setupEventListeners();
+                this.showConnectionStatus(true);
+                this.loadMessageHistory();
+                this.startHealthCheck();
+            }
+            
+            generateSessionId() {
+                return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            }
+            
+            setupEventListeners() {
+                this.sendButton.addEventListener('click', () => this.sendMessage());
+                this.messageInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                });
+                
+                // Enhanced keyboard shortcuts
+                this.messageInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'ArrowUp' && this.messageInput.value === '') {
+                        this.recallLastMessage();
+                    }
+                    if (e.ctrlKey && e.key === 'Enter') {
+                        this.sendMessage();
+                    }
+                });
+                
+                // Auto-resize input
+                this.messageInput.addEventListener('input', () => {
+                    this.messageInput.style.height = 'auto';
+                    this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 100) + 'px';
+                });
+                
+                // Connection monitoring
+                window.addEventListener('online', () => this.handleConnectionChange(true));
+                window.addEventListener('offline', () => this.handleConnectionChange(false));
+            }
+            
+            async sendMessage() {
+                const message = this.messageInput.value.trim();
+                if (!message || !this.isConnected) return;
+                
+                // Add to history and display
+                this.addToHistory(message);
+                this.displayMessage(message, 'user');
+                this.messageInput.value = '';
+                this.messageInput.style.height = 'auto';
+                
+                // Show typing indicator
+                this.showTypingIndicator();
+                this.setLoading(true);
+                
+                try {
+                    await this.sendToA2A(message);
+                    this.retryAttempts = 0; // Reset on success
+                } catch (error) {
+                    console.error('Error sending message:', error);
+                    this.handleSendError(error, message);
+                } finally {
+                    this.hideTypingIndicator();
+                    this.setLoading(false);
+                }
+            }
+            
+            async sendToA2A(message) {
+                const response = await fetch('/a2a/chat/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        session_id: this.sessionId,
+                        streaming: true
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        
+                        buffer += decoder.decode(value);
+                        const lines = buffer.split('\\n');
+                        buffer = lines.pop(); // Keep incomplete line in buffer
+                        
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                const data = line.slice(6);
+                                if (data.trim()) {
+                                    try {
+                                        const event = JSON.parse(data);
+                                        this.handleA2AEvent(event);
+                                    } catch (e) {
+                                        console.error('Failed to parse event:', data);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    reader.releaseLock();
+                }
+            }
+            
+            handleA2AEvent(event) {
+                if (event.error) {
+                    this.displayMessage(`Error: ${event.error}`, 'assistant', 'Error');
+                    return;
+                }
+                
+                if (event.content) {
+                    const agentName = this.getAgentDisplayName(event.agent || 'system');
+                    this.displayMessage(event.content, 'assistant', agentName);
+                }
+                
+                if (event.status) {
+                    this.showStatus(`Status: ${event.status}`);
+                }
+            }
+            
+            getAgentDisplayName(agentId) {
+                const agentNames = {
+                    'InteriorDesignAgent': '🎨 Interior Design Specialist',
+                    'InventoryAgent': '📦 Inventory Manager',
+                    'CustomerLoyaltyAgent': '🎁 Loyalty Advisor',
+                    'CartManagementAgent': '🛒 Cart Manager',
+                    'CoraAgent': '🛍️ Shopping Assistant',
+                    'A2ACoordinator': '🔄 Coordinator',
+                    'system': '🤖 System'
+                };
+                return agentNames[agentId] || `🤖 ${agentId}`;
+            }
+            
+            displayMessage(content, sender, agentName = null) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${sender}-message`;
+                
+                let messageHTML = '';
+                if (agentName && sender === 'assistant') {
+                    messageHTML += `<div class="agent-label">${agentName}</div>`;
+                }
+                messageHTML += `<div>${this.escapeHtml(content)}</div>`;
+                
+                // Add timestamp
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString('en-US', { 
+                    hour12: false, 
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                });
+                messageHTML += `<div class="message-timestamp">${timeStr}</div>`;
+                
+                // Add message actions for user messages
+                if (sender === 'user') {
+                    messageHTML += `
+                        <div class="message-actions">
+                            <button class="action-btn" onclick="navigator.clipboard.writeText('${this.escapeHtml(content)}');">📋 Copy</button>
+                            <button class="action-btn" onclick="document.getElementById('messageInput').value='${this.escapeHtml(content)}';">✏️ Edit & Resend</button>
+                        </div>
+                    `;
+                } else {
+                    messageHTML += `
+                        <div class="message-actions">
+                            <button class="action-btn" onclick="navigator.clipboard.writeText('${this.escapeHtml(content)}');">📋 Copy</button>
+                            <button class="action-btn" onclick="this.closest('.container').querySelector('#messageInput').value='Can you explain this in more detail?';">❓ Explain More</button>
+                        </div>
+                    `;
+                }
+                
+                messageDiv.innerHTML = messageHTML;
+                this.chatContainer.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+            
+            showStatus(status) {
+                // Remove existing status
+                const existingStatus = this.chatContainer.querySelector('.status');
+                if (existingStatus) {
+                    existingStatus.remove();
+                }
+                
+                // Add new status
+                const statusDiv = document.createElement('div');
+                statusDiv.className = 'status';
+                statusDiv.textContent = status;
+                this.chatContainer.appendChild(statusDiv);
+                this.scrollToBottom();
+                
+                // Remove status after 3 seconds
+                setTimeout(() => {
+                    if (statusDiv.parentNode) {
+                        statusDiv.remove();
+                    }
+                }, 3000);
+            }
+            
+            setLoading(loading) {
+                this.sendButton.disabled = loading;
+                this.sendButton.textContent = loading ? 'Sending...' : 'Send';
+            }
+            
+            scrollToBottom() {
+                this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
+            }
+            
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+            
+            // Enhanced UX Methods
+            showTypingIndicator() {
+                this.hideTypingIndicator(); // Remove existing
+                const indicator = document.createElement('div');
+                indicator.className = 'typing-indicator';
+                indicator.innerHTML = `
+                    <div class="agent-label">🤖 Assistant is thinking...</div>
+                    <div class="typing-dots">
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                    </div>
+                `;
+                this.currentTypingIndicator = indicator;
+                this.chatContainer.appendChild(indicator);
+                this.scrollToBottom();
+            }
+            
+            hideTypingIndicator() {
+                if (this.currentTypingIndicator) {
+                    this.currentTypingIndicator.remove();
+                    this.currentTypingIndicator = null;
+                }
+            }
+            
+            showConnectionStatus(connected) {
+                this.isConnected = connected;
+                const existingStatus = this.chatContainer.querySelector('.connection-status');
+                if (existingStatus) existingStatus.remove();
+                
+                const statusDiv = document.createElement('div');
+                statusDiv.className = `connection-status ${connected ? '' : 'disconnected'}`;
+                statusDiv.innerHTML = `
+                    <div class="status-dot ${connected ? '' : 'disconnected'}"></div>
+                    <span>${connected ? 'Connected to A2A server' : 'Disconnected - trying to reconnect...'}</span>
+                `;
+                this.chatContainer.appendChild(statusDiv);
+                this.scrollToBottom();
+                
+                if (!connected) {
+                    setTimeout(() => statusDiv.remove(), 5000);
+                }
+            }
+            
+            addToHistory(message) {
+                this.messageHistory.push(message);
+                if (this.messageHistory.length > 50) {
+                    this.messageHistory.shift(); // Keep last 50 messages
+                }
+                this.saveMessageHistory();
+            }
+            
+            recallLastMessage() {
+                if (this.messageHistory.length > 0) {
+                    this.messageInput.value = this.messageHistory[this.messageHistory.length - 1];
+                }
+            }
+            
+            saveMessageHistory() {
+                try {
+                    localStorage.setItem('zava_message_history', JSON.stringify(this.messageHistory));
+                } catch (e) {
+                    console.warn('Failed to save message history:', e);
+                }
+            }
+            
+            loadMessageHistory() {
+                try {
+                    const saved = localStorage.getItem('zava_message_history');
+                    if (saved) {
+                        this.messageHistory = JSON.parse(saved);
+                    }
+                } catch (e) {
+                    console.warn('Failed to load message history:', e);
+                    this.messageHistory = [];
+                }
+            }
+            
+            handleConnectionChange(connected) {
+                this.showConnectionStatus(connected);
+                if (connected && this.retryAttempts > 0) {
+                    this.showStatus('Connection restored');
+                }
+            }
+            
+            handleSendError(error, originalMessage) {
+                this.retryAttempts++;
+                const isNetworkError = error.message.includes('Failed to fetch') || error.message.includes('NetworkError');
+                
+                if (isNetworkError && this.retryAttempts <= this.maxRetries) {
+                    this.showConnectionStatus(false);
+                    this.displayMessage(
+                        `Connection lost. Retrying... (${this.retryAttempts}/${this.maxRetries})`,
+                        'assistant',
+                        '⚠️ System'
+                    );
+                    
+                    setTimeout(() => {
+                        this.messageInput.value = originalMessage;
+                        this.sendMessage();
+                    }, 2000 * this.retryAttempts);
+                } else {
+                    const errorMsg = `Sorry, I encountered an error: ${error.message}`;
+                    const retryBtn = this.retryAttempts <= this.maxRetries ? 
+                        `<button class="retry-button" onclick="this.closest('.message').previousSibling.querySelector('input').value='${originalMessage.replace(/'/g, "\'")}';">Retry</button>` : '';
+                    
+                    this.displayMessage(
+                        errorMsg + retryBtn,
+                        'assistant',
+                        '❌ Error'
+                    );
+                }
+            }
+            
+            startHealthCheck() {
+                setInterval(async () => {
+                    try {
+                        const response = await fetch('/health');
+                        const isHealthy = response.ok;
+                        if (this.isConnected !== isHealthy) {
+                            this.showConnectionStatus(isHealthy);
+                        }
+                    } catch (e) {
+                        if (this.isConnected) {
+                            this.showConnectionStatus(false);
+                        }
+                    }
+                }, 30000); // Check every 30 seconds
+            }
+        }
+        
+        // Initialize chat when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new ZavaChat();
+        });
+    </script>
+</body>
+</html>
