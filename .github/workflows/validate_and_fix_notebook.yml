@@ -1,0 +1,60 @@
+name: Validate and Fix Notebook
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-fix-notebook:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Jupyter and nbformat
+        run: |
+          pip install jupyter nbformat
+
+      - name: Validate and Fix Notebook
+        run: |
+          python -c "
+          import nbformat
+          import glob
+          for file in glob.glob('**/*.ipynb', recursive=True):
+              with open(file, 'r') as f:
+                  nb = nbformat.read(f, as_version=4)
+              nbformat.validate(nb)
+              if 'widgets' in nb.metadata:
+                  if 'application/vnd.jupyter.widget-state+json' not in nb.metadata['widgets']:
+                      nb.metadata['widgets']['application/vnd.jupyter.widget-state+json'] = {'version': '1.0', 'state': {}}
+                  elif 'state' not in nb.metadata['widgets']['application/vnd.jupyter.widget-state+json']:
+                      nb.metadata['widgets']['application/vnd.jupyter.widget-state+json']['state'] = {}
+              with open(file, 'w') as f:
+                  nbformat.write(nb, f)
+          "
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+      - name: Commit changes
+        run: |
+          git fetch origin
+          git checkout -b ${{ github.event.pull_request.head.ref }} origin/${{ github.event.pull_request.head.ref }}
+          git add -A
+          git commit -m "Fix notebook format issues" || echo "No changes to commit"
+          git pull --rebase origin ${{ github.event.pull_request.head.ref }} || echo "No rebase needed"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
