@@ -1,0 +1,21 @@
+# Job runner image for data pipeline and agent provisioning
+FROM mcr.microsoft.com/azureml/curated/minimal-ubuntu22.04-py310-cpu:20240618.v1
+
+# Install system deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements (reuse app requirements)
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Copy pipelines and agent scripts
+COPY pipelines /app/pipelines
+COPY app/agents /app/app/agents
+
+# Default command can be overridden per job
+CMD ["python", "-m", "pipelines.ingest_to_cosmos"]

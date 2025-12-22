@@ -1,0 +1,21 @@
+ProductID,ProductName,ProductCategory,ProductDescription,Price,ImageUrl
+1001,Zava Smart Speaker,Electronics,Voice-controlled speaker with high-fidelity audio and edge AI noise suppression,89.99,https://example.com/images/speaker.jpg
+1002,Zava Wireless Earbuds,Electronics,Comfort-fit earbuds with adaptive EQ and 30h battery life,129.00,https://example.com/images/earbuds.jpg
+1003,Zava Fitness Tracker,Sports,Water-resistant tracker with heart rate variability and sleep stage insights,59.50,https://example.com/images/tracker.jpg
+1004,Zava Running Shoes,Sports,Breathable mesh performance shoes with responsive foam sole,104.95,https://example.com/images/runningshoes.jpg
+1005,Zava Cotton Hoodie,Apparel,Ultra-soft recycled cotton hoodie with antimicrobial treatment,54.99,https://example.com/images/hoodie.jpg
+1006,Zava Insulated Bottle,Home,Double-wall stainless steel bottle keeps drinks cold 24h / hot 12h,28.00,https://example.com/images/bottle.jpg
+1007,Zava Ceramic Mug,Home,Matte glaze 14oz mug safe for dishwasher and microwave,12.75,https://example.com/images/mug.jpg
+1008,Zava Multi-Tool Outdoor,Sports,Compact 11-in-1 stainless multi-tool with locking blades,36.40,https://example.com/images/multitool.jpg
+1009,Zava Hair Serum,Beauty,Nutrient-rich lightweight serum for frizz control and shine,24.50,https://example.com/images/hairserum.jpg
+1010,Zava Vitamin C Gummies,Grocery,Non-GMO vegan gummies with natural citrus flavor (90 count),18.99,https://example.com/images/vitaminc.jpg
+1011,Zava Gaming Mouse,Electronics,Customizable RGB ergonomic mouse with 12K DPI sensor,64.00,https://example.com/images/mouse.jpg
+1012,Zava Mechanical Keyboard,Electronics,"Hot-swap switches, per-key lighting, and PBT keycaps",139.95,https://example.com/images/keyboard.jpg
+1013,Zava Desk Lamp,Home,Adjustable LED lamp with ambient backlight and USB-C charging port,42.25,https://example.com/images/desklamp.jpg
+1014,Zava Noise Masking Device,Electronics,Generates adaptive ambient sound for focus and sleep environments,79.99,https://example.com/images/noisemask.jpg
+1015,Zava Travel Backpack,Apparel,Weather-resistant 28L backpack with laptop sleeve and hidden pocket,98.00,https://example.com/images/backpack.jpg
+1016,Zava Smart Plug,Electronics,Energy monitoring smart plug with over-current protection,19.95,https://example.com/images/smartplug.jpg
+1017,Zava LED Strip Kit,Electronics,16M color Wi-Fi LED strip with music sync mode,34.50,https://example.com/images/ledstrip.jpg
+1018,Zava Foam Roller,Sports,"High-density recovery roller improves circulation and muscle release",25.00,https://example.com/images/foamroller.jpg
+1019,Zava Sunscreen SPF50,Beauty,Broad-spectrum mineral sunscreen water-resistant for 80 minutes,21.25,https://example.com/images/sunscreen.jpg
+1020,Zava Organic Trail Mix,Grocery,"Blend of roasted nuts, seeds, and dried berries (16oz)",11.49,https://example.com/images/trailmix.jpg
