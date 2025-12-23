@@ -20,12 +20,12 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '16'
+          node-version: '20'
 
       - name: Install Markdown Linter
-        run: npm install -g markdownlint-cli
+        run: npm install -g markdownlint-cli@0.33.0
 
       - name: Lint and Fix Markdown files
         run: markdownlint '**/*.md' --fix --config .github/.markdownlint.json 
