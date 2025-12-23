@@ -115,37 +115,7 @@ graph TD
 
         > E.g 
         
-4. **Automated Agent Creation & A2A Registration**:
-   - **Fully automated by terraform**: No manual intervention required
-   - Installs the `azure-ai-projects` SDK and connects to MSFT Foundry
-   - Creates 5 specialized media processing agents:
-     - **Main Orchestrator**: Central request router and task coordinator
-     - **Image Cropping Specialist**: Smart object detection and cropping
-     - **Background Modification Agent**: Background removal and replacement
-     - **Thumbnail Generation Agent**: Final asset composition with text overlays
-     - **Video Processing Agent**: Video analysis and frame extraction
-   - Automatically stores agent IDs in Azure Key Vault for secure access
-   - Web app retrieves agent configuration from Key Vault automatically
-   - **Zero manual configuration** - terraform handles all agent deployment and setup
 
-      > E.g 
-      
-5. **Application Deployment**:
-   - Builds the Docker container with A2A protocol support in the cloud (ACR Build).
-   - Configures the Azure Web App with the generated Agent IDs, A2A endpoints, and credentials.
-   - Deploys the container with A2A server components and restarts the app.
-
-## Verification
-
-> After deployment completes, verify the system:
-
-1. **Check the Web App**:
-   - The Terraform output will provide the `application_url`.
-   - Visit `https://<your-app-name>.azurewebsites.net`.
-   - You should see the Zava chat interface with A2A protocol support.
-
-      > E.g 
-      
 2. **Verify A2A Protocol Endpoints**:
    - Check A2A Chat API: `https://<your-app-name>.azurewebsites.net/a2a/chat`
    - Check A2A Server API: `https://<your-app-name>.azurewebsites.net/a2a/api/docs`
@@ -163,7 +133,7 @@ graph TD
    - **Agent IDs are automatically stored in Azure Key Vault** and retrieved by the web app
 
       > E.g 
-      
+
 4. **Test Enhanced A2A Interactions**: For example:
    - **General**: "Hi, I need a thumbnail for my video."
    - **Cropping**: "Crop the person from this image."
