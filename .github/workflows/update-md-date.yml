@@ -19,6 +19,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.head_ref || github.ref_name }}
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -36,23 +37,21 @@ jobs:
       - name: Update last modified date in Markdown files
         run: python .github/workflows/update_date.py
 
-      - name: Commit and merge changes
+      - name: Commit and push changes
         env:
-          PR_BRANCH: ${{ github.head_ref || github.ref_name }}
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
         run: |
-          # Ensure we're on the correct branch
-          git switch -c "$PR_BRANCH" || git switch "$PR_BRANCH"
-          
-          # Stage and commit all changes (new, modified, deleted)
+          # We're already on the PR branch after checkout; commit changes in place
+          git status --porcelain
           git add -A
-          git diff --staged --quiet || git commit -m "Update last modified date in Markdown files"
-          
-          # Pull and merge existing changes from remote
-          git pull origin "$PR_BRANCH" --no-rebase
-          
-          # Push all changes to the PR branch
-          git push origin "$PR_BRANCH"
+          if ! git diff --staged --quiet; then
+            git commit -m "Update last modified date in Markdown files"
+          else
+            echo "No changes to commit"
+          fi
+
+          # Push using the token provided by actions/checkout (persisted credentials)
+          git push origin HEAD:${{ github.head_ref || github.ref_name }} --force-with-lease
