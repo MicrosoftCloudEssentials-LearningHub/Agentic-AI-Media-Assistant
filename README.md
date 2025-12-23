@@ -111,12 +111,10 @@ graph TD
 
         > E.g 
 
-   
    - Creates and populates an Azure AI Search index with vector embeddings through A2A coordination.
 
         > E.g 
         
-
 4. **Automated Agent Creation & A2A Registration**:
    - **Fully automated by terraform**: No manual intervention required
    - Installs the `azure-ai-projects` SDK and connects to MSFT Foundry
@@ -132,7 +130,6 @@ graph TD
 
       > E.g 
       
-
 5. **Application Deployment**:
    - Builds the Docker container with A2A protocol support in the cloud (ACR Build).
    - Configures the Azure Web App with the generated Agent IDs, A2A endpoints, and credentials.
@@ -149,7 +146,6 @@ graph TD
 
       > E.g 
       
-
 2. **Verify A2A Protocol Endpoints**:
    - Check A2A Chat API: `https://<your-app-name>.azurewebsites.net/a2a/chat`
    - Check A2A Server API: `https://<your-app-name>.azurewebsites.net/a2a/api/docs`
@@ -168,7 +164,6 @@ graph TD
 
       > E.g 
       
-
 4. **Test Enhanced A2A Interactions**: For example:
    - **General**: "Hi, I need a thumbnail for my video."
    - **Cropping**: "Crop the person from this image."
