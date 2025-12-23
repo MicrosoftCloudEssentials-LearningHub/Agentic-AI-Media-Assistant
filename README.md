@@ -115,7 +115,6 @@ graph TD
 
         > E.g 
         
-
 2. **Verify A2A Protocol Endpoints**:
    - Check A2A Chat API: `https://<your-app-name>.azurewebsites.net/a2a/chat`
    - Check A2A Server API: `https://<your-app-name>.azurewebsites.net/a2a/api/docs`
