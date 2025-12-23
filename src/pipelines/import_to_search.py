@@ -84,6 +84,7 @@ def create_indexer():
             FieldMapping(source_field_name="ProductDescription", target_field_name="ProductDescription"),
             FieldMapping(source_field_name="ProductPrice", target_field_name="ProductPrice"),
             FieldMapping(source_field_name="ProductImageURL", target_field_name="ProductImageURL"),
+            FieldMapping(source_field_name="TenantId", target_field_name="TenantId"),
             FieldMapping(source_field_name="content_for_vector", target_field_name="content_for_vector"),
         ]
     )

@@ -15,6 +15,7 @@ DATABASE_NAME = os.environ.get("COSMOS_DB_NAME")
 CONTAINER_NAME = os.environ.get("COSMOS_DB_CONTAINER_NAME")
 SKIP_IF_EXISTS = os.environ.get("COSMOS_SKIP_IF_EXISTS", "true").lower() == "true"
 FORCE_INGEST = os.environ.get("COSMOS_FORCE_INGEST", "false").lower() == "true"
+TENANT_ID = os.environ.get("COSMOS_TENANT_ID", "zava-demo")
 
 # Find CSV file - check both relative and absolute paths
 _csv_candidates = [
@@ -101,7 +102,7 @@ def main():
     
     container = database.create_container_if_not_exists(
         id=CONTAINER_NAME,
-        partition_key=PartitionKey(path="/ProductID")
+        partition_key=PartitionKey(path="/TenantId")
     )
     logger.info(f"Connected to container: {CONTAINER_NAME}")
 
@@ -137,6 +138,8 @@ def main():
         item = row._asdict()
         item['id'] = str(item['ProductID'])
         item['ProductID'] = str(item['ProductID'])
+        item['TenantId'] = TENANT_ID
+        item['ProductCategory'] = item.get('ProductCategory', 'uncategorized') or 'uncategorized'
         
         # Insert or update item
         container.upsert_item(body=item)

@@ -27,8 +27,8 @@ def deploy_agents():
 
     project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT") or os.getenv("AZURE_AI_FOUNDRY_ENDPOINT")
     if not project_endpoint:
-        print("ERROR: AZURE_AI_PROJECT_ENDPOINT / AZURE_AI_FOUNDRY_ENDPOINT not configured")
-        sys.exit(0)  # Do not hard fail; allow Terraform run to proceed
+        # Use the actual deployed endpoint from terraform
+        project_endpoint = "https://aif-eastus2-5d360b17.cognitiveservices.azure.com/"
 
     print("=" * 70)
     print("Idempotent Multi-Agent Provisioning - Azure AI Foundry")
@@ -39,10 +39,10 @@ def deploy_agents():
     # Try to construct connection string if available
     project_connection_string = os.getenv("AZURE_AI_PROJECT_CONNECTION_STRING")
     if not project_connection_string:
-        sub_id = os.getenv("AZURE_SUBSCRIPTION_ID")
-        rg = os.getenv("AZURE_RESOURCE_GROUP")
-        project_name = os.getenv("AZURE_AI_PROJECT_NAME")
-        location = os.getenv("AZURE_LOCATION")
+        sub_id = os.getenv("AZURE_SUBSCRIPTION_ID", "407f4106-0fd3-42e0-9348-3686dd1e7347")
+        rg = os.getenv("AZURE_RESOURCE_GROUP", "RG-AI-Mediax4v")  # Fixed: v not z
+        project_name = os.getenv("AZURE_AI_PROJECT_NAME", "proj-eastus2-5d360b17")  # Fixed: actual project name
+        location = os.getenv("AZURE_LOCATION", "eastus2")
         
         if sub_id and rg and project_name and location:
             project_connection_string = f"{location}.api.azureml.ms;subscription_id={sub_id};resource_group={rg};project_name={project_name}"
@@ -61,43 +61,43 @@ def deploy_agents():
                 "- If the user wants to create a video, delegate to the 'video_agent'. "
                 "- For general questions, answer them yourself."
             ),
-            "model": "gpt-4o-mini"
+            "model": "gpt-4o"  # Upgraded to GPT-4o for better coordination
         },
         {
             "name": "Cropping Specialist",
             "env_var": "cropping_agent",
             "instructions": (
                 "You are the Cropping Specialist. Your task is to identify objects in images and provide cropping coordinates or cropped images. "
-                "You use advanced vision models to detect subjects."
+                "You use advanced vision models to detect subjects and understand image content."
             ),
-            "model": "gpt-4o-mini"
+            "model": "gpt-4o"  # Using GPT-4o for advanced image analysis
         },
         {
             "name": "Background Specialist",
             "env_var": "background_agent",
             "instructions": (
                 "You are the Background Specialist. Your task is to remove or replace backgrounds in images. "
-                "You can create new backgrounds based on text descriptions."
+                "You can create new backgrounds based on text descriptions using advanced AI capabilities."
             ),
-            "model": "gpt-4o-mini"
+            "model": "gpt-4o"  # Using GPT-4o for sophisticated background processing
         },
         {
             "name": "Thumbnail Generator",
             "env_var": "thumbnail_generator",
             "instructions": (
                 "You are the Thumbnail Generator. Your task is to create eye-catching video thumbnails. "
-                "You combine images, text, and effects to maximize click-through rates."
+                "You combine images, text, and effects to maximize click-through rates using advanced design strategies."
             ),
-            "model": "gpt-4o-mini"
+            "model": "gpt-4o"  # Using GPT-4o for intelligent thumbnail design
         },
         {
             "name": "Video Agent",
             "env_var": "video_agent",
             "instructions": (
                 "You are the Video Agent. Your task is to create and process video content. "
-                "You can generate videos from prompts, edit existing videos, and provide video recommendations."
+                "You can analyze videos, provide editing recommendations, and suggest video enhancements."
             ),
-            "model": "gpt-4o-mini"
+            "model": "gpt-4o"  # Using GPT-4o for advanced video processing capabilities
         }
     ]
 
@@ -131,30 +131,22 @@ def deploy_agents():
         if not all([sub_id, rg, project_name]):
             raise ValueError("Missing required environment variables: AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, AZURE_AI_PROJECT_NAME")
         
-        # Fix endpoint domain if needed (Cognitive Services -> AI Services)
-        if project_endpoint and "cognitiveservices.azure.com" in project_endpoint:
-            print(f"Converting endpoint domain: cognitiveservices.azure.com -> services.ai.azure.com")
-            project_endpoint = project_endpoint.replace("cognitiveservices.azure.com", "services.ai.azure.com")
-            os.environ["AZURE_AI_PROJECT_ENDPOINT"] = project_endpoint
+        # Keep the original cognitiveservices.azure.com endpoint domain
+        # The Azure AI Projects API uses the cognitiveservices domain
         
-        # Construct proper project endpoint: https://<hub>.services.ai.azure.com/api/projects/<project>
-        # Remove any existing path segments first
-        base_endpoint = project_endpoint.split("/api/")[0]  # Get just the base URL
-        base_endpoint = base_endpoint.rstrip('/')
-        
-        # Now add the proper API path with project name
-        full_project_endpoint = f"{base_endpoint}/api/projects/{project_name}"
-        
-        print(f"Project Endpoint (base): {base_endpoint}")
-        print(f"Project Endpoint (full): {full_project_endpoint}")
+        # Use the base endpoint directly
+        print(f"Project Endpoint: {project_endpoint}")
         print(f"Subscription: {sub_id}")
         print(f"Resource Group: {rg}")
         print(f"Project Name: {project_name}")
         
-        # Initialize AIProjectClient with endpoint and credential
-        # The SDK requires the full project endpoint
+        # Initialize AIProjectClient using subscription, resource group, and project name
+        # This is the recommended approach for Azure AI Projects
         project_client = AIProjectClient(
-            endpoint=full_project_endpoint,
+            endpoint=project_endpoint,  # Use the base endpoint
+            subscription_id=sub_id,
+            resource_group_name=rg,
+            project_name=project_name,
             credential=credential
         )
         

@@ -278,7 +278,9 @@
     </div>
 
     <script>
-        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        let ws = null;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
         const messagesDiv = document.getElementById('chat-messages');
         const userInput = document.getElementById('user-input');
         const fileInput = document.getElementById('file-input');
@@ -287,14 +289,44 @@
         
         let currentImageData = null;
 
-        ws.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            if (data.type === 'agent_response') {
-                addMessage(data.message, 'assistant', data.agent, data.image_data);
-            } else if (data.type === 'error') {
-                addMessage(data.message, 'assistant', 'Error');
-            }
-        };
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+            
+            ws.onopen = function() {
+                console.log('WebSocket connected');
+                reconnectAttempts = 0;
+                addMessage('Connected to server', 'assistant', 'System');
+            };
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                if (data.type === 'agent_response') {
+                    addMessage(data.message, 'assistant', data.agent, data.image_data);
+                } else if (data.type === 'error') {
+                    addMessage(data.message, 'assistant', 'Error');
+                }
+            };
+            
+            ws.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                addMessage('Connection error occurred', 'assistant', 'Error');
+            };
+            
+            ws.onclose = function() {
+                console.log('WebSocket disconnected');
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    addMessage(`Connection lost. Reconnecting... (${reconnectAttempts}/${maxReconnectAttempts})`, 'assistant', 'System');
+                    setTimeout(connectWebSocket, 2000 * reconnectAttempts);
+                } else {
+                    addMessage('Connection lost. Please refresh the page.', 'assistant', 'Error');
+                }
+            };
+        }
+
+        // Initialize WebSocket connection
+        connectWebSocket();
 
         function addMessage(text, sender, agentName = null, imageData = null) {
             const messageDiv = document.createElement('div');
@@ -305,7 +337,7 @@
                 html += `<div class="agent-badge">${agentName}</div>`;
             }
             
-            html += `<div class="message-content">${text}`;
+            html += `<div class="message-content">${escapeHtml(text)}`;
             
             if (imageData) {
                 html += `<br><img src="${imageData}" class="message-image">`;
@@ -318,20 +350,37 @@
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
 
         function sendMessage() {
             const text = userInput.value.trim();
             
             if (!text && !currentImageData) return;
             
+            // Check WebSocket connection
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('Not connected to server. Please wait...', 'assistant', 'Error');
+                return;
+            }
+            
             // Add user message to chat
-            addMessage(text, 'user', null, currentImageData);
+            addMessage(text || '(image uploaded)', 'user', null, currentImageData);
             
             // Send to server
-            ws.send(JSON.stringify({
-                message: text,
-                image: currentImageData
-            }));
+            try {
+                ws.send(JSON.stringify({
+                    message: text,
+                    image: currentImageData
+                }));
+            } catch (error) {
+                console.error('Error sending message:', error);
+                addMessage('Failed to send message. Please try again.', 'assistant', 'Error');
+            }
             
             userInput.value = '';
             clearImage();
@@ -364,11 +413,19 @@
         });
 
         function handleFile(file) {
+            if (!file.type.startsWith('image/')) {
+                addMessage('Please upload an image file', 'assistant', 'Error');
+                return;
+            }
+            
             const reader = new FileReader();
             reader.onload = function(e) {
                 currentImageData = e.target.result;
                 imagePreview.src = currentImageData;
                 previewContainer.style.display = 'block';
+            };
+            reader.onerror = function() {
+                addMessage('Failed to read file. Please try again.', 'assistant', 'Error');
             };
             reader.readAsDataURL(file);
         }

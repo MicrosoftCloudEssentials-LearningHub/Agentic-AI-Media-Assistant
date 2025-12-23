@@ -41,6 +41,8 @@ if os.path.exists(static_dir) and os.listdir(static_dir):
 # Mount templates
 templates = Jinja2Templates(directory="app/templates")
 
+orchestrator_error: Optional[str] = None
+
 try:
     # Initialize Orchestrator - Use real Azure AI agents
     # AgentProcessor will use AGENT_ORCHESTRATOR_ID from environment by default
@@ -48,6 +50,7 @@ try:
     logger.info("Orchestrator initialized successfully")
 
 except Exception as e:
+    orchestrator_error = str(e)
     logger.error(f"Failed to initialize orchestrator: {e}", exc_info=True)
     # Create a simple fallback app that can at least respond to health checks
     orchestrator = None
@@ -60,6 +63,15 @@ def fast_json_dumps(obj):
 async def read_root(request: Request):
     """Serve the main interface"""
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/diagnostics")
+async def diagnostics():
+    """Expose orchestrator diagnostic details for troubleshooting."""
+    return {
+        "orchestrator_initialized": orchestrator is not None,
+        "error": orchestrator_error,
+    }
 
 @app.post("/upload")
 async def upload_image(file: UploadFile = File(...)):
@@ -96,7 +108,8 @@ async def websocket_endpoint(websocket: WebSocket):
             if not orchestrator:
                 await websocket.send_text(fast_json_dumps({
                     "type": "error",
-                    "message": "Agent service is currently unavailable. Please check configuration."
+                    "message": "Agent service is currently unavailable. Please check configuration.",
+                    "details": orchestrator_error
                 }))
                 continue
                 
