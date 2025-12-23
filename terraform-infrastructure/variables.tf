@@ -33,6 +33,12 @@ variable "enable_cosmos_local_auth" {
   default     = true
 }
 
+variable "cosmos_tenant_id" {
+  type        = string
+  description = "Logical tenant identifier stamped onto each Cosmos item"
+  default     = "zava-demo"
+}
+
 variable "enable_ai_automation" {
   type        = bool
   description = "Whether to run Azure AI Foundry automation steps (model deployments, connections, .env creation)"
@@ -85,5 +91,23 @@ variable "automation_storage_path" {
   type        = string
   description = "Path for automation data storage"
   default     = "./automation_data"
+}
+
+variable "app_service_location" {
+  type        = string
+  description = "Optional region override for App Service / Web App hosting"
+  default     = null
+}
+
+variable "app_service_sku" {
+  type        = string
+  description = "SKU name for the App Service plan (e.g., B1, S1, P0v3)."
+  default     = "P0v3"
+}
+
+variable "lock_key_vault_network" {
+  type        = bool
+  description = "Whether to lock Key Vault firewall to specific IPs (set true only when deployment IPs are stable)."
+  default     = false
 }
 

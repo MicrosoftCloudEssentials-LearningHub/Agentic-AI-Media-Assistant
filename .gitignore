@@ -11,10 +11,13 @@ __pycache__
 *agents_state.json
 .env.example
 .env_automation
+*.zip
+*logs
 
 # .tfstate files
 *.tfstate
 *.tfstate.*
+tfplan
 
 # Crash log files
 crash.log

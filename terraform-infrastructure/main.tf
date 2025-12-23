@@ -73,6 +73,7 @@ locals {
   # Use provided user_principal_id or default to current Azure CLI user
   principal_id        = var.user_principal_id != null ? var.user_principal_id : data.azurerm_client_config.current.object_id
   suffix              = substr(random_id.suffix.hex, 0, 8)
+  web_app_location    = coalesce(var.app_service_location, var.location)
   cosmos_account_name = "${var.name_prefix}${local.suffix}cosmosdb"
   cosmos_db_name      = "${var.name_prefix}-db" # Dynamic cosmos db name
   storage_account     = lower(replace("${var.name_prefix}${local.suffix}sa", "-", ""))
@@ -80,6 +81,7 @@ locals {
   model_regions_overrides = fileexists("${path.module}/${var.model_regions_file}") ? try(jsondecode(file("${path.module}/${var.model_regions_file}")).model_regions, {}) : {}
   model_regions_final = merge({
     "gpt-4o-mini"            = var.location,
+    "gpt-4o"                 = var.location,
     "text-embedding-3-small" = var.location,
     "dall-e-3"               = var.location,
     "model-router"           = var.location,
@@ -121,6 +123,70 @@ locals {
   model_endpoints          = { for m, r in local.model_regions_filtered : m => local.foundry_endpoints[r] }
   model_key_secret_map     = { for m, r in local.model_regions_filtered : m => local.foundry_key_secret_names[r] }
   primary_foundry_region   = local.model_region_map["gpt-4o-mini"]
+
+  ai_model_specs = {
+    "gpt-4o-mini" = {
+      model_name    = "gpt-4o-mini"
+      model_version = "2024-07-18"
+      model_format  = "OpenAI"
+      sku_name      = "GlobalStandard"
+      sku_capacity  = 10
+    }
+    "gpt-4o" = {
+      model_name    = "gpt-4o"
+      model_version = "2024-08-06"
+      model_format  = "OpenAI"
+      sku_name      = "GlobalStandard"
+      sku_capacity  = 10
+    }
+    "text-embedding-3-small" = {
+      model_name    = "text-embedding-3-small"
+      model_version = "1"
+      model_format  = "OpenAI"
+      sku_name      = "GlobalStandard"
+      sku_capacity  = 10
+    }
+    "dall-e-3" = {
+      model_name    = "dall-e-3"
+      model_version = "3.0"
+      model_format  = "OpenAI"
+      sku_name      = "Standard"
+      sku_capacity  = 3
+    }
+    "gpt-image-1" = {
+      model_name    = "gpt-image-1"
+      model_version = "1.0"
+      model_format  = "OpenAI"
+      sku_name      = "Standard"
+      sku_capacity  = 3
+    }
+    "model-router" = {
+      model_name    = "gpt-4o-mini"
+      model_version = "2024-07-18"
+      model_format  = "OpenAI"
+      sku_name      = "GlobalStandard"
+      sku_capacity  = 5
+    }
+    "FLUX.1-Kontext-pro" = {
+      model_name    = "FLUX.1-Kontext-pro"
+      model_version = "1.0"
+      model_format  = "OpenAI"
+      sku_name      = "Standard"
+      sku_capacity  = 2
+    }
+    "sora-2" = {
+      model_name    = "sora-2"
+      model_version = "2025-01-01"
+      model_format  = "OpenAI"
+      sku_name      = "Standard"
+      sku_capacity  = 2
+    }
+  }
+
+  model_deployment_payload = {
+    for region, models in local.region_models :
+    region => [for alias in models : merge({ alias = alias }, lookup(local.ai_model_specs, alias, {}))]
+  }
 }
 
 resource "azurerm_cosmosdb_account" "cosmos" {
@@ -156,7 +222,7 @@ resource "azurerm_cosmosdb_sql_container" "products" {
   resource_group_name = azurerm_resource_group.rg.name
   account_name        = azurerm_cosmosdb_account.cosmos.name
   database_name       = azurerm_cosmosdb_sql_database.cosmosdb.name
-  partition_key_paths = ["/ProductID"]
+  partition_key_paths = ["/TenantId"]
   throughput          = 400
 }
 
@@ -420,15 +486,15 @@ resource "null_resource" "docker_image_build" {
 resource "azurerm_service_plan" "appserviceplan" {
   name                = local.app_service_plan
   resource_group_name = azurerm_resource_group.rg.name
-  location            = var.location
+  location            = local.web_app_location
   os_type             = "Linux"
-  sku_name            = "B1" # Basic tier to avoid Standard VM quota issues
+  sku_name            = var.app_service_sku
 }
 
 resource "azurerm_linux_web_app" "app" {
   name                = local.web_app_name
   resource_group_name = azurerm_resource_group.rg.name
-  location            = var.location
+  location            = local.web_app_location
   service_plan_id     = azurerm_service_plan.appserviceplan.id
   https_only          = true
 
@@ -519,6 +585,7 @@ resource "azurerm_linux_web_app" "app" {
     # External Service Keys via Key Vault
     SEARCH_SERVICE_KEY        = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/search-admin-key)"
     COSMOS_DB_KEY             = var.enable_cosmos_local_auth ? "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/cosmos-primary-key)" : "AAD_AUTH"
+    COSMOS_TENANT_ID          = var.cosmos_tenant_id
     STORAGE_CONNECTION_STRING = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/storage-connection-string)"
 
     # Multi-Agent Configuration - Always use Key Vault references
@@ -528,6 +595,12 @@ resource "azurerm_linux_web_app" "app" {
     AGENT_CROPPING_AGENT_ID      = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cropping-agent-id)"
     AGENT_BACKGROUND_AGENT_ID    = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-background-agent-id)"
     AGENT_THUMBNAIL_GENERATOR_ID = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-thumbnail-generator-id)"
+    AGENT_VIDEO_AGENT_ID         = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-video-agent-id)"
+    orchestrator                 = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-orchestrator-id)"
+    cropping_agent               = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-cropping-agent-id)"
+    background_agent             = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-background-agent-id)"
+    thumbnail_generator          = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-thumbnail-generator-id)"
+    video_agent                  = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/agent-video-agent-id)"
 
     # Application Insights via Key Vault
     APPLICATION_INSIGHTS_CONNECTION_STRING = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/app-insights-connection-string)"
@@ -588,9 +661,12 @@ resource "azurerm_key_vault" "kv" {
   public_network_access_enabled = true
 
   network_acls {
-    default_action = "Deny"
+    # Keep the vault open initially so Terraform can read/write secrets during plan/apply.
+    # The `null_resource.kv_network_rules` will add the current and webapp IPs and
+    # then set the default action to Deny when `var.lock_key_vault_network` is true.
+    default_action = "Allow"
     bypass         = "AzureServices"
-    ip_rules       = ["${chomp(data.http.current_ip.response_body)}/32"]
+    ip_rules       = var.lock_key_vault_network ? ["${chomp(data.http.current_ip.response_body)}/32"] : []
   }
 
   access_policy {
@@ -616,15 +692,23 @@ resource "null_resource" "kv_network_rules" {
   ]
 
   triggers = {
-    kv_name       = azurerm_key_vault.kv.name
-    rg_name       = azurerm_resource_group.rg.name
-    current_ip    = chomp(data.http.current_ip.response_body)
-    outbound_ips  = data.azurerm_linux_web_app.app_identity.outbound_ip_addresses
+    kv_name            = azurerm_key_vault.kv.name
+    rg_name            = azurerm_resource_group.rg.name
+    current_ip         = chomp(data.http.current_ip.response_body)
+    outbound_ips       = data.azurerm_linux_web_app.app_identity.outbound_ip_addresses
+    lock_kv_firewall   = tostring(var.lock_key_vault_network)
   }
 
   provisioner "local-exec" {
     interpreter = ["pwsh", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]
     command     = <<EOT
+      $lockEnabled = "${var.lock_key_vault_network ? "true" : "false"}"
+      if ($lockEnabled -ne "true") {
+        Write-Host "[KV] lock_key_vault_network=false -> leaving firewall open"
+        az keyvault update --name "${azurerm_key_vault.kv.name}" --resource-group "${azurerm_resource_group.rg.name}" --default-action Allow --bypass AzureServices | Out-Null
+        exit 0
+      }
+
       $kvName = "${azurerm_key_vault.kv.name}"
       $rg     = "${azurerm_resource_group.rg.name}"
       $ipsCsv = "${chomp(data.http.current_ip.response_body)}/32,${data.azurerm_linux_web_app.app_identity.outbound_ip_addresses}"
@@ -645,6 +729,16 @@ data "azurerm_linux_web_app" "app_identity" {
   depends_on          = [azurerm_linux_web_app.app]
 }
 
+# External helper to ensure Key Vault has our current IP rule so Terraform can access secrets
+data "external" "ensure_kv_access" {
+  program = ["pwsh", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "./scripts/ensure_kv_network_rule.ps1"]
+  query = {
+    kv_name = local.key_vault_name
+    rg_name = var.resource_group_name
+  }
+  depends_on = [azurerm_key_vault.kv]
+}
+
 # Access policy for Web App managed identity to read secrets
 resource "azurerm_key_vault_access_policy" "app_policy" {
   key_vault_id       = azurerm_key_vault.kv.id
@@ -659,7 +753,11 @@ resource "azurerm_key_vault_secret" "search_admin_key" {
   name         = "search-admin-key"
   value        = jsondecode(data.azapi_resource_action.search_admin_keys[0].output).primaryKey
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv]
+  depends_on   = [
+    azurerm_key_vault.kv,
+    null_resource.kv_network_rules,
+    data.external.ensure_kv_access
+  ]
 }
 
 # Fetch storage keys unconditionally
@@ -676,7 +774,12 @@ resource "azurerm_key_vault_secret" "storage_connection_string" {
   name         = "storage-connection-string"
   value        = "DefaultEndpointsProtocol=https;AccountName=${local.storage_account};AccountKey=${jsondecode(data.azapi_resource_action.storage_keys_unconditional.output).keys[0].value};EndpointSuffix=core.windows.net"
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv, data.azapi_resource_action.storage_keys_unconditional]
+  depends_on   = [
+    azurerm_key_vault.kv,
+    data.azapi_resource_action.storage_keys_unconditional,
+    null_resource.kv_network_rules,
+    data.external.ensure_kv_access
+  ]
 }
 
 resource "azurerm_key_vault_secret" "cosmos_primary_key" {
@@ -684,7 +787,11 @@ resource "azurerm_key_vault_secret" "cosmos_primary_key" {
   name         = "cosmos-primary-key"
   value        = jsondecode(data.azapi_resource_action.cosmos_keys[0].output).primaryMasterKey
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv]
+  depends_on   = [
+    azurerm_key_vault.kv,
+    null_resource.kv_network_rules,
+    data.external.ensure_kv_access
+  ]
 }
 
 # External data source for agents state
@@ -698,35 +805,71 @@ resource "azurerm_key_vault_secret" "agent_orchestrator_id" {
   name         = "agent-orchestrator-id"
   value        = data.external.agents_state.result["agent_orchestrator_id"]
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
+  depends_on   = [
+    azurerm_key_vault.kv,
+    data.external.agents_state,
+    null_resource.kv_network_rules,
+    data.external.ensure_kv_access
+  ]
 }
 
 resource "azurerm_key_vault_secret" "agent_cropping_agent_id" {
   name         = "agent-cropping-agent-id"
   value        = data.external.agents_state.result["agent_cropping_agent_id"]
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
+  depends_on   = [
+    azurerm_key_vault.kv,
+    data.external.agents_state,
+    null_resource.kv_network_rules,
+    data.external.ensure_kv_access
+  ]
 }
 
 resource "azurerm_key_vault_secret" "agent_background_agent_id" {
   name         = "agent-background-agent-id"
   value        = data.external.agents_state.result["agent_background_agent_id"]
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
+  depends_on   = [
+    azurerm_key_vault.kv,
+    data.external.agents_state,
+    null_resource.kv_network_rules,
+    data.external.ensure_kv_access
+  ]
 }
 
 resource "azurerm_key_vault_secret" "agent_thumbnail_generator_id" {
   name         = "agent-thumbnail-generator-id"
   value        = data.external.agents_state.result["agent_thumbnail_generator_id"]
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv, data.external.agents_state]
+  depends_on   = [
+    azurerm_key_vault.kv,
+    data.external.agents_state,
+    null_resource.kv_network_rules,
+    data.external.ensure_kv_access
+  ]
+}
+
+resource "azurerm_key_vault_secret" "agent_video_agent_id" {
+  name         = "agent-video-agent-id"
+  value        = data.external.agents_state.result["agent_video_agent_id"]
+  key_vault_id = azurerm_key_vault.kv.id
+  depends_on   = [
+    azurerm_key_vault.kv,
+    data.external.agents_state,
+    null_resource.kv_network_rules,
+    data.external.ensure_kv_access
+  ]
 }
 
 resource "azurerm_key_vault_secret" "agent_endpoint" {
   name         = "agent-endpoint"
-  value        = "https://${local.foundry_names[local.model_region_map["gpt-4o-mini"]]}.services.ai.azure.com/models"
+  value        = "https://${local.foundry_names[local.model_region_map["gpt-4o-mini"]]}.cognitiveservices.azure.com/"
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv]
+  depends_on   = [
+    azurerm_key_vault.kv,
+    null_resource.kv_network_rules,
+    data.external.ensure_kv_access
+  ]
 }
 
 # App Service Plan autoscale
@@ -1047,7 +1190,7 @@ resource "azurerm_role_assignment" "storage_blob_data_contributor_project" {
 
 # Azure AI model deployments automation (fast local execution)
 resource "null_resource" "ai_model_deployments" {
-  count = var.enable_ai_automation ? 1 : 0
+  for_each = var.enable_ai_automation ? local.region_models : {}
 
   depends_on = [
     azapi_resource.ai_project,
@@ -1057,93 +1200,53 @@ resource "null_resource" "ai_model_deployments" {
 
   provisioner "local-exec" {
     command     = <<-EOT
-      # Create AI model deployments
-      Write-Host "Creating Azure AI model deployments..."
-      
-      # Wait for AI Foundry to be fully ready
-      Write-Host "Waiting for AI Foundry to be ready..."
-      Start-Sleep -Seconds 30
-      
-      try {
-        # Create gpt-4o-mini deployment
-        Write-Host "Creating gpt-4o-mini deployment..."
-        az cognitiveservices account deployment create `
-          --resource-group "${azurerm_resource_group.rg.name}" `
-          --name "${local.foundry_names[local.primary_foundry_region]}" `
-          --deployment-name "gpt-4o-mini" `
-          --model-name "gpt-4o-mini" `
-          --model-version "2024-07-18" `
-          --model-format "OpenAI" `
-          --sku-capacity 10 `
-          --sku-name "GlobalStandard"
-        
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "gpt-4o-mini deployment created successfully"
-          } else {
-            Write-Host "gpt-4o-mini deployment may already exist or failed to create"
-          }
+      $region = "${each.key}"
+      $foundryName = "${local.foundry_names[each.key]}"
+      $rg = "${azurerm_resource_group.rg.name}"
 
-        # Create text-embedding-3-small deployment
-        Write-Host "Creating text-embedding-3-small deployment..."
-        az cognitiveservices account deployment create `
-          --resource-group "${azurerm_resource_group.rg.name}" `
-          --name "${local.foundry_names[local.primary_foundry_region]}" `
-          --deployment-name "text-embedding-3-small" `
-          --model-name "text-embedding-3-small" `
-          --model-version "1" `
-          --model-format "OpenAI" `
-          --sku-capacity 10 `
-          --sku-name "GlobalStandard"
-        
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "text-embedding-3-small deployment created successfully"
-          } else {
-            Write-Host "text-embedding-3-small deployment may already exist or failed to create"
-          }
-        
-        # Create dall-e-3 deployment for image generation
-        Write-Host "Creating dall-e-3 deployment..."
-        try {
-          az cognitiveservices account deployment create `
-            --resource-group "${azurerm_resource_group.rg.name}" `
-            --name "${local.foundry_names[local.primary_foundry_region]}" `
-            --deployment-name "dall-e-3" `
-            --model-name "dall-e-3" `
-            --model-version "3.0" `
-            --model-format "OpenAI" `
-            --sku-capacity 1 `
-            --sku-name "Standard"
-          
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "dall-e-3 deployment created successfully"
-          } else {
-            Write-Host "dall-e-3 model not available in this region/tier, skipping"
-          }
-        } catch {
-          Write-Host "dall-e-3 model not supported in this region, skipping"
+      Write-Host "=== Deploying models for region $region (Foundry: $foundryName) ==="
+      Start-Sleep -Seconds 15
+
+      $modelSpecs = ConvertFrom-Json @'
+${replace(jsonencode(local.model_deployment_payload[each.key]),"'","''")}
+'@
+
+      foreach ($spec in $modelSpecs) {
+        if (-not $spec.model_name) {
+          Write-Host "[SKIP] No deployment spec registered for alias $($spec.alias)"
+          continue
         }
-        
-        # List all deployments to verify
-        Write-Host "`nCurrent model deployments:"
-        az cognitiveservices account deployment list `
-          --resource-group "${azurerm_resource_group.rg.name}" `
-          --name "${local.foundry_names[local.primary_foundry_region]}" `
-          --query "[].{Name:name,Model:properties.model.name,Version:properties.model.version,Capacity:properties.currentCapacity}" `
-          --output table
-        
-        Write-Host "`nModel deployment process completed successfully."
+
+        Write-Host "Deploying $($spec.alias) -> model $($spec.model_name) ($($spec.model_version))"
+        az cognitiveservices account deployment create `
+          --resource-group $rg `
+          --name $foundryName `
+          --deployment-name $spec.alias `
+          --model-name $spec.model_name `
+          --model-version $spec.model_version `
+          --model-format $spec.model_format `
+          --sku-name $spec.sku_name `
+          --sku-capacity $spec.sku_capacity 2>$null
+
+        if ($LASTEXITCODE -eq 0) {
+          Write-Host "[OK] $($spec.alias) deployment ensured"
+        } else {
+          Write-Host "[WARN] Unable to deploy $($spec.alias). Check availability in region $region"
+        }
       }
-      catch {
-        Write-Host "Error during model deployment: $_"
-        Write-Host "This may be expected if deployments already exist."
-      }
+
+      Write-Host "Listing current deployments for $foundryName"
+      az cognitiveservices account deployment list `
+        --resource-group $rg `
+        --name $foundryName `
+        --output table
     EOT
     interpreter = ["PowerShell", "-Command"]
   }
 
   triggers = {
-    ai_foundry_id = values(azapi_resource.ai_foundry)[0].id
-    ai_project_id = values(azapi_resource.ai_project)[0].id
+    foundry_id    = azapi_resource.ai_foundry[each.key].id
+    model_payload = sha256(jsonencode(local.model_deployment_payload[each.key]))
   }
 }
 
@@ -1163,7 +1266,12 @@ resource "azurerm_key_vault_secret" "ai_foundry_keys" {
   name         = local.foundry_key_secret_names[each.key]
   value        = jsondecode(each.value.output).key1
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault.kv, data.azapi_resource_action.ai_foundry_keys]
+  depends_on   = [
+    azurerm_key_vault.kv,
+    data.azapi_resource_action.ai_foundry_keys,
+    null_resource.kv_network_rules,
+    data.external.ensure_kv_access
+  ]
 }
 
 # Connection helper actions for Foundry resources
@@ -1551,9 +1659,6 @@ resource "null_resource" "deploy_multi_agents" {
           
           # Store agent endpoint
           $endpoint = $env:AZURE_AI_PROJECT_ENDPOINT
-          if ($endpoint -like "*cognitiveservices.azure.com*") {
-            $endpoint = $endpoint.Replace("cognitiveservices.azure.com", "services.ai.azure.com")
-          }
           
           Write-Host "  Setting agent-endpoint..."
           az keyvault secret set `
@@ -1594,32 +1699,61 @@ resource "null_resource" "verify_agent_secrets" {
 
   provisioner "local-exec" {
     command     = <<-EOT
-      Write-Host "Verifying agent secrets in Key Vault..."
+      Write-Host "Verifying agent secrets in Key Vault with retries..."
       $kv = "${azurerm_key_vault.kv.name}"
       $secrets = @(
         "agent-orchestrator-id",
         "agent-cropping-agent-id",
         "agent-background-agent-id",
         "agent-thumbnail-generator-id",
+        "agent-video-agent-id",
         "agent-endpoint"
       )
 
+      $maxAttempts = 6
+      $attempt = 0
       $missing = @()
-      foreach ($name in $secrets) {
-        $val = az keyvault secret show --vault-name $kv --name $name --query value -o tsv 2>$null
-        if (-not $val -or $val -eq "null" -or $val -eq "") {
-          Write-Host "[ERROR] Missing or empty secret: $name"
-          $missing += $name
-        } else {
-          Write-Host "[OK] $name present"
+
+      while ($attempt -lt $maxAttempts) {
+        $missing = @()
+        foreach ($name in $secrets) {
+          try {
+            $val = az keyvault secret show --vault-name $kv --name $name --query value -o tsv 2>$null
+            if (-not $val -or $val -eq "null" -or $val -eq "") {
+              Write-Host "[WARN] Missing or empty secret: $name (attempt $($attempt+1)/$maxAttempts)"
+              $missing += $name
+            } else {
+              Write-Host "[OK] $name present"
+            }
+          } catch {
+            Write-Host "[WARN] Could not check secret: $name (attempt $($attempt+1)/$maxAttempts)"
+            $missing += $name
+          }
+        }
+
+        if ($missing.Count -eq 0) {
+          Write-Host "All agent secrets verified"
+          break
+        }
+
+        $attempt++
+        if ($attempt -lt $maxAttempts) {
+          Write-Host "Waiting 10s for secrets to propagate..."
+          Start-Sleep -Seconds 10
         }
       }
 
       if ($missing.Count -gt 0) {
-        Write-Host "Missing secrets: $($missing -join ", ")"
+        Write-Host "Final missing secrets after $maxAttempts attempts: $($missing -join ", ")"
+        Write-Host "Listing secrets currently in Key Vault for diagnostics:"
+        try {
+          az keyvault secret list --vault-name $kv --query '[].name' -o tsv
+        } catch {
+          Write-Host "(failed to list secrets)"
+        }
+        Write-Host "Please check the deploy_multi_agents provisioner logs or run the agent deploy script manually to populate secrets."
         exit 1
       }
-      Write-Host "All agent secrets verified"
     EOT
     interpreter = ["PowerShell", "-Command"]
   }
@@ -1651,10 +1785,12 @@ resource "null_resource" "data_pipeline" {
       $env:COSMOS_DB_CONTAINER_NAME = "product_catalog"
       $env:COSMOS_SKIP_IF_EXISTS = "true"
       $env:COSMOS_FORCE_INGEST = "false"
+      $env:COSMOS_TENANT_ID = "${var.cosmos_tenant_id}"
       $env:SEARCH_SERVICE_ENDPOINT = "https://${local.search_service_name}.search.windows.net"
       $env:SEARCH_INDEX_NAME = "products-index"
       $env:AZURE_OPENAI_ENDPOINT = "${local.model_endpoints["text-embedding-3-small"]}"
       $env:AZURE_OPENAI_EMBEDDING_DEPLOYMENT = "text-embedding-3-small"
+      $env:AZURE_OPENAI_API_VERSION = "2024-02-01"
       
       # Get Azure OpenAI API key from Key Vault
       Write-Host "Fetching Azure OpenAI API key from Key Vault..."
@@ -1981,12 +2117,20 @@ resource "null_resource" "webapp_container_restart" {
 
   depends_on = [
     null_resource.docker_image_build,
-    azurerm_linux_web_app.app
+    azurerm_linux_web_app.app,
+    azurerm_key_vault_secret.agent_orchestrator_id,
+    azurerm_key_vault_secret.agent_cropping_agent_id,
+    azurerm_key_vault_secret.agent_background_agent_id,
+    azurerm_key_vault_secret.agent_thumbnail_generator_id,
+    azurerm_key_vault_secret.agent_video_agent_id,
+    azurerm_key_vault_access_policy.app_policy
   ]
 
   triggers = {
-    docker_image_id = null_resource.docker_image_build.id
-    always_run      = timestamp()
+    docker_image_id     = null_resource.docker_image_build.id
+    agent_orchestrator  = azurerm_key_vault_secret.agent_orchestrator_id.version
+    agent_video         = azurerm_key_vault_secret.agent_video_agent_id.version
+    always_run          = timestamp()
   }
 }
 

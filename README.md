@@ -21,16 +21,17 @@ Last updated: 2025-12-10
 >
 > 1. Adjust [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) values 
 > 2. Initialize terraform with `terraform init`. Click here to [understand more about the deployment process](./terraform-infrastructure/README.md)
-> 3. Run `terraform apply`, you can also leverage `terraform apply -auto-approve`. 
+> 3. Run `terraform apply` - this automatically handles **all** deployment including agent creation and configuration
 
 ## Key Features
 
 - **Media-Centric A2A Protocol**: Agent-to-Agent communication for complex image and video processing workflows
-- **4-Agent Architecture**: Specialized AI agents with proper delegation through A2A protocol:
-  - **Main Orchestrator (Thumbnail Orchestrator)**: Central request router that analyzes user requests, understands intent, and intelligently delegates tasks to specialized agents
+- **5-Agent Architecture**: Specialized AI agents with proper delegation through A2A protocol:
+  - **Main Orchestrator**: Central request router that analyzes user requests, understands intent, and intelligently delegates tasks to specialized agents
   - **Image Cropping Specialist**: Smart object detection and cropping capabilities  
   - **Background Modification Agent**: Specialized in background removal, replacement, and scene adaptation
   - **Thumbnail Generation Agent**: Composes final assets with text overlays and layout optimization
+  - **Video Processing Agent**: Specialized video analysis and frame extraction for video thumbnail generation
 - **Real-Time Image Processing**: Upload or paste images directly into the chat for immediate agent action
 - **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents with proper delegation patterns
 - **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle including enhanced A2A framework deployment
@@ -118,16 +119,18 @@ graph TD
         
         <https://github.com/user-attachments/assets/37c4a8cd-73e1-4392-8755-fb018481d8cb>
 
-4. **Enhanced Agent Creation & A2A Registration**:
-   - Installs the `azure-ai-projects` SDK and Microsoft Agent Framework.
-   - Connects to MSFT Foundry for agent hosting.
-   - Provisions 6 specialized agents with enhanced A2A protocol integration:
-     - Core shopping agents (5) plus Product Management Specialist
-     - Marketing Agent and Ranker Agent with delegation patterns
-     - Product Information Plugin with predefined catalog data
-   - Registers all agents with the enhanced A2A discovery service.
-   - Configures delegation relationships between Product Manager and specialized agents.
-   - Saves the unique Agent IDs, delegation endpoints, and A2A configuration to the `.env` file.
+4. **Automated Agent Creation & A2A Registration**:
+   - **Fully automated by terraform**: No manual intervention required
+   - Installs the `azure-ai-projects` SDK and connects to MSFT Foundry
+   - Creates 5 specialized media processing agents:
+     - **Main Orchestrator**: Central request router and task coordinator
+     - **Image Cropping Specialist**: Smart object detection and cropping
+     - **Background Modification Agent**: Background removal and replacement
+     - **Thumbnail Generation Agent**: Final asset composition with text overlays
+     - **Video Processing Agent**: Video analysis and frame extraction
+   - Automatically stores agent IDs in Azure Key Vault for secure access
+   - Web app retrieves agent configuration from Key Vault automatically
+   - **Zero manual configuration** - terraform handles all agent deployment and setup
 
       > E.g 
       
@@ -159,11 +162,13 @@ graph TD
 3. **Verify Enhanced Agent Architecture**:
    - Go to the [MSFT Foundry Portal](https://ai.azure.com).
    - Navigate to your project -> **Build** -> **Agents**.
-   - You should see the specialized media agents listed:
-     - Main Orchestrator (Thumbnail Orchestrator) - Request Router
-     - Image Cropping Specialist
+   - You should see the 5 specialized media agents listed:
+     - Main Orchestrator - Request Router
+     - Image Cropping Specialist  
      - Background Modification Agent
      - Thumbnail Generation Agent
+     - Video Processing Agent
+   - **Agent IDs are automatically stored in Azure Key Vault** and retrieved by the web app
 
       > E.g 
       

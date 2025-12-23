@@ -79,7 +79,8 @@ def read_agents_state():
         "agent_orchestrator_id",
         "agent_cropping_agent_id", 
         "agent_background_agent_id",
-        "agent_thumbnail_generator_id"
+        "agent_thumbnail_generator_id",
+        "agent_video_agent_id"
     ]
     
     # Only keep the required keys for media agents
@@ -112,7 +113,8 @@ def main():
             "agent_orchestrator_id": "asst_local_orchestrator",
             "agent_cropping_agent_id": "asst_local_cropping_agent",
             "agent_background_agent_id": "asst_local_background_agent", 
-            "agent_thumbnail_generator_id": "asst_local_thumbnail_generator"
+            "agent_thumbnail_generator_id": "asst_local_thumbnail_generator",
+            "agent_video_agent_id": "asst_local_video_agent"
         }
         
         print(json.dumps(default_result))

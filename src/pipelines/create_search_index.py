@@ -60,6 +60,7 @@ def create_search_index():
         SearchableField(name="ProductDescription", type=SearchFieldDataType.String, searchable=True),
         SimpleField(name="ProductPrice", type=SearchFieldDataType.Double, filterable=True, sortable=True),
         SimpleField(name="ProductImageURL", type=SearchFieldDataType.String),
+        SimpleField(name="TenantId", type=SearchFieldDataType.String, filterable=True, facetable=True),
         SearchableField(name="content_for_vector", type=SearchFieldDataType.String, searchable=True),
         SearchField(
             name="content_vector",

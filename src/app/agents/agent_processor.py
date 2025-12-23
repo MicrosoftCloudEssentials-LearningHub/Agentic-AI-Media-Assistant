@@ -135,31 +135,22 @@ class AgentProcessor:
         if not self.project_endpoint or not _REMOTE_AVAILABLE:
             raise ValueError(f"Remote agent support unavailable (endpoint: {self.project_endpoint}, SDK available: {_REMOTE_AVAILABLE})")
         
-        # Initialize AI Project Client with endpoint-only mode (for backward compatibility)
-        try:
-            self.client = AIProjectClient(endpoint=self.project_endpoint, credential=DefaultAzureCredential())
-        except TypeError:
-            # Newer SDK version requires subscription_id, resource_group, project_name
-            subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID")
-            resource_group = os.environ.get("AZURE_RESOURCE_GROUP")
-            project_name = os.environ.get("AZURE_AI_PROJECT_NAME")
-            
-            if not all([subscription_id, resource_group, project_name]):
-                raise ValueError(f"AIProjectClient requires subscription_id, resource_group, and project_name. "
-                               f"Missing: {', '.join([k for k, v in {'AZURE_SUBSCRIPTION_ID': subscription_id, 'AZURE_RESOURCE_GROUP': resource_group, 'AZURE_AI_PROJECT_NAME': project_name}.items() if not v])}")
-            
-            self.client = AIProjectClient(
-                subscription_id=subscription_id,
-                resource_group_name=resource_group,
-                project_name=project_name,
-                credential=DefaultAzureCredential()
-            )
-            
-            if not all([subscription_id, resource_group, project_name]):
-                raise ValueError(
-                    f"AIProjectClient requires subscription_id, resource_group_name, and project_name. "
-                    f"Set AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, and AZURE_AI_PROJECT_NAME environment variables."
-                )
+        # Initialize AI Project Client - use new SDK constructor that requires subscription/resource group/project
+        subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID")
+        resource_group = os.environ.get("AZURE_RESOURCE_GROUP")
+        project_name = os.environ.get("AZURE_AI_PROJECT_NAME")
+        
+        if not all([subscription_id, resource_group, project_name]):
+            raise ValueError(f"AIProjectClient requires subscription_id, resource_group, and project_name. "
+                           f"Missing: {', '.join([k for k, v in {'AZURE_SUBSCRIPTION_ID': subscription_id, 'AZURE_RESOURCE_GROUP': resource_group, 'AZURE_AI_PROJECT_NAME': project_name}.items() if not v])}")
+        
+        self.client = AIProjectClient(
+            endpoint=self.project_endpoint,
+            subscription_id=subscription_id,
+            resource_group_name=resource_group,
+            project_name=project_name,
+            credential=DefaultAzureCredential()
+        )
     
     def run_conversation_with_text_stream(
         self,
