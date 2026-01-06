@@ -27,12 +27,6 @@ variable "user_principal_id" {
   default     = null
 }
 
-variable "enable_cosmos_local_auth" {
-  type        = bool
-  description = "Whether to enable local auth on Cosmos DB account"
-  default     = true
-}
-
 variable "cosmos_tenant_id" {
   type        = string
   description = "Logical tenant identifier stamped onto each Cosmos item"
@@ -42,12 +36,6 @@ variable "cosmos_tenant_id" {
 variable "enable_ai_automation" {
   type        = bool
   description = "Whether to run Azure AI Foundry automation steps (model deployments, connections, .env creation)"
-  default     = true
-}
-
-variable "enable_data_pipeline" {
-  type        = bool
-  description = "Whether to run data pipeline automation (requires Python and data files)"
   default     = true
 }
 

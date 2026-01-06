@@ -1,42 +1,99 @@
 import os
 import logging
 import json
+import traceback
 from typing import Any, Dict, Optional
+from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import orjson
 
+# OpenTelemetry imports
+from opentelemetry import trace
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
+
 from app.agents.agent_processor import AgentProcessor
+from app.agents.local_agent_processor import LocalAgentProcessor
 
 # Load environment variables
 load_dotenv()
 
-# Configure logging
+# Configure comprehensive logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.DEBUG,  # Changed to DEBUG for detailed logging
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Configure Azure Monitor if connection string is available
+appinsights_connection_string = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+if appinsights_connection_string:
+    try:
+        logger.info("Configuring Azure Monitor OpenTelemetry...")
+        # Set up tracer provider
+        trace.set_tracer_provider(TracerProvider())
+        
+        # Create Azure Monitor exporter
+        exporter = AzureMonitorTraceExporter(connection_string=appinsights_connection_string)
+        span_processor = BatchSpanProcessor(exporter)
+        trace.get_tracer_provider().add_span_processor(span_processor)
+        
+        logger.info("Azure Monitor OpenTelemetry configured successfully")
+    except Exception as e:
+        logger.error(f"Failed to configure Azure Monitor: {e}", exc_info=True)
+else:
+    logger.warning("APPLICATIONINSIGHTS_CONNECTION_STRING not set - Azure Monitor disabled")
+
+# Get tracer
+tracer = trace.get_tracer(__name__)
 
 logger.info("Starting Zava Media AI Assistant...")
 logger.info(f"Current working directory: {os.getcwd()}")
 logger.info(f"Files in current directory: {os.listdir('.')}")
 
+# Log all environment variables (excluding sensitive values)
+logger.debug("Environment variables:")
+for key in sorted(os.environ.keys()):
+    if any(secret in key.upper() for secret in ["KEY", "SECRET", "PASSWORD", "TOKEN"]):
+        logger.debug(f"  {key}=***REDACTED***")
+    else:
+        logger.debug(f"  {key}={os.environ[key]}")
+
 # Initialize FastAPI app
 app = FastAPI(title="Zava Media AI Assistant")
+
+# Add CORS middleware to allow frontend communication
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for Azure App Service
+    allow_credentials=False,  # Changed to False for wildcard origins
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Instrument FastAPI with OpenTelemetry
+FastAPIInstrumentor.instrument_app(app)
+logger.info("FastAPI instrumented with OpenTelemetry")
 
 # Health check endpoint (required for App Service)
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "Zava Media AI Assistant"}
+    with tracer.start_as_current_span("health_check"):
+        logger.debug("Health check requested")
+        return {"status": "healthy", "service": "Zava Media AI Assistant", "timestamp": datetime.utcnow().isoformat()}
 
 # Mount static files only if directory exists and has content
 static_dir = "app/static"
 if os.path.exists(static_dir) and os.listdir(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    logger.info(f"Static files mounted from {static_dir}")
 
 # Mount templates
 templates = Jinja2Templates(directory="app/templates")
@@ -44,10 +101,11 @@ templates = Jinja2Templates(directory="app/templates")
 orchestrator_error: Optional[str] = None
 
 try:
-    # Initialize Orchestrator - Use real Azure AI agents
-    # AgentProcessor will use AGENT_ORCHESTRATOR_ID from environment by default
-    orchestrator = AgentProcessor()
-    logger.info("Orchestrator initialized successfully")
+    # Use Azure OpenAI models directly for media processing (no Agents API required)
+    # This gives us full access to Sora, DALL-E, FLUX, GPT-Image models
+    logger.info("Initializing Azure OpenAI-based orchestrator for media processing")
+    orchestrator = LocalAgentProcessor(agent_id="azure_media_orchestrator", domain="orchestrator")
+    logger.info("Azure orchestrator initialized successfully")
 
 except Exception as e:
     orchestrator_error = str(e)
@@ -89,66 +147,119 @@ async def upload_image(file: UploadFile = File(...)):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time chat"""
-    await websocket.accept()
-    logger.info("WebSocket connection established")
+    connection_id = datetime.utcnow().isoformat()
+    logger.info(f"[{connection_id}] WebSocket connection attempt...")
     
     try:
-        while True:
-            # Receive message from client
-            data = await websocket.receive_text()
-            message_data = json.loads(data)
+        await websocket.accept()
+        logger.info(f"[{connection_id}] WebSocket connection established")
+        
+        with tracer.start_as_current_span("websocket_session") as span:
+            span.set_attribute("connection_id", connection_id)
             
-            user_message = message_data.get("message", "")
-            image_data = message_data.get("image", None)
-            
-            if not user_message and not image_data:
-                continue
-            
-            # Check if orchestrator is available
-            if not orchestrator:
-                await websocket.send_text(fast_json_dumps({
-                    "type": "error",
-                    "message": "Agent service is currently unavailable. Please check configuration.",
-                    "details": orchestrator_error
-                }))
-                continue
+            while True:
+                try:
+                    # Receive message from client
+                    data = await websocket.receive_text()
+                    logger.debug(f"[{connection_id}] Received data: {data[:200]}...")
+                    
+                    message_data = json.loads(data)
+                    
+                    user_message = message_data.get("message", "")
+                    image_data = message_data.get("image", None)
+                    
+                    logger.info(f"[{connection_id}] User message: {user_message[:100]}...")
+                    if image_data:
+                        logger.info(f"[{connection_id}] Image data received: {len(image_data)} chars")
+                    
+                    if not user_message and not image_data:
+                        logger.warning(f"[{connection_id}] Empty message received, skipping")
+                        continue
+                    
+                    # Check if orchestrator is available
+                    if not orchestrator:
+                        error_msg = {
+                            "type": "error",
+                            "message": "Agent service is currently unavailable. Please check configuration.",
+                            "details": orchestrator_error
+                        }
+                        logger.error(f"[{connection_id}] Orchestrator not available: {orchestrator_error}")
+                        await websocket.send_text(fast_json_dumps(error_msg))
+                        continue
+                        
+                    # Process with Orchestrator
+                    logger.info(f"[{connection_id}] Starting orchestrator processing...")
+                    
+                    with tracer.start_as_current_span("process_message") as process_span:
+                        process_span.set_attribute("message_length", len(user_message))
+                        process_span.set_attribute("has_image", bool(image_data))
+                        
+                        try:
+                            additional_context = {}
+                            if image_data:
+                                additional_context["image_data"] = image_data
+                                logger.debug(f"[{connection_id}] Added image data to context")
+                            
+                            # Stream response from agent
+                            logger.info(f"[{connection_id}] Calling orchestrator.run_conversation_with_text_stream...")
+                            response_text = ""
+                            chunk_count = 0
+                            
+                            for chunk in orchestrator.run_conversation_with_text_stream(
+                                user_message=user_message,
+                                additional_context=additional_context if additional_context else None
+                            ):
+                                response_text += chunk
+                                chunk_count += 1
+                                if chunk_count % 10 == 0:
+                                    logger.debug(f"[{connection_id}] Received {chunk_count} chunks, {len(response_text)} chars so far")
+                            
+                            logger.info(f"[{connection_id}] Stream complete: {chunk_count} chunks, {len(response_text)} total chars")
+                            
+                            # Send complete response back
+                            response = {
+                                "type": "agent_response",
+                                "agent": "Zava Media Assistant",
+                                "message": response_text,
+                                "image_data": None  # Image processing would happen via agents
+                            }
+                            
+                            logger.info(f"[{connection_id}] Sending response to client...")
+                            await websocket.send_text(fast_json_dumps(response))
+                            logger.info(f"[{connection_id}] Response sent successfully")
+                            
+                        except Exception as e:
+                            error_msg = f"Error processing request: {str(e)}"
+                            logger.error(f"[{connection_id}] {error_msg}", exc_info=True)
+                            logger.error(f"[{connection_id}] Traceback: {traceback.format_exc()}")
+                            
+                            error_response = {
+                                "type": "error",
+                                "message": error_msg,
+                                "details": traceback.format_exc()
+                            }
+                            
+                            await websocket.send_text(fast_json_dumps(error_response))
                 
-            # Process with Orchestrator
-            try:
-                # Build context with image data if provided
-                additional_context = {}
-                if image_data:
-                    additional_context["image_data"] = image_data
-                
-                # Stream response from agent
-                response_text = ""
-                for chunk in orchestrator.run_conversation_with_text_stream(
-                    user_message=user_message,
-                    additional_context=additional_context if additional_context else None
-                ):
-                    response_text += chunk
-                
-                # Send complete response back
-                response = {
-                    "type": "agent_response",
-                    "agent": "Zava Media Assistant",
-                    "message": response_text,
-                    "image_data": None  # Image processing would happen via agents
-                }
-                await websocket.send_text(fast_json_dumps(response))
-                
-            except Exception as e:
-                logger.error(f"Error processing request: {e}", exc_info=True)
-                await websocket.send_text(fast_json_dumps({
-                    "type": "error",
-                    "message": f"An error occurred: {str(e)}"
-                }))
-                
+                except json.JSONDecodeError as e:
+                    logger.error(f"[{connection_id}] JSON decode error: {e}", exc_info=True)
+                    await websocket.send_text(fast_json_dumps({
+                        "type": "error",
+                        "message": f"Invalid JSON: {str(e)}"
+                    }))
+                except Exception as e:
+                    logger.error(f"[{connection_id}] Unexpected error in message loop: {e}", exc_info=True)
+                    await websocket.send_text(fast_json_dumps({
+                        "type": "error",
+                        "message": f"Unexpected error: {str(e)}"
+                    }))
+                    
     except WebSocketDisconnect:
-        logger.info("WebSocket disconnected")
+        logger.info(f"[{connection_id}] WebSocket disconnected normally")
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"[{connection_id}] WebSocket error: {e}", exc_info=True)
         try:
             await websocket.close()
         except:
             pass
+

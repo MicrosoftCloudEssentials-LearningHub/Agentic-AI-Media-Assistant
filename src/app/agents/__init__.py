@@ -1,1 +1,0 @@
-# Media Agent initialization module

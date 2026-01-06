@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 import requests
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
-from azure.identity import DefaultAzureCredential
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai import AzureOpenAI
 
 logger = logging.getLogger(__name__)
@@ -143,56 +143,80 @@ class ImageService:
                 "blob_url": None
             }
 
-    def generate_video(self, prompt: str, model: str = None) -> dict:
+    def generate_video(self, prompt: str, duration: float = 3.0, fps: int = 8, 
+                      model: str = "dall-e-3", style: str = "photorealistic") -> dict:
         """
-        Generate a video using Sora.
+        Generate a video using image sequence stitching (DALL-E-3 or FLUX.2-pro).
+        
+        TEMPORARY IMPLEMENTATION:
+        This method uses image sequences because:
+        1. Sora is not available in the current Azure subscription
+        2. Sora-2 is still in private preview as of January 2026
+        
+        TODO: Replace with direct Sora-2 API calls when it becomes available in Azure AI Foundry.
         
         Args:
             prompt: Text description of the video
-            model: Specific model to use (default: sora-2)
+            duration: Video duration in seconds (default: 3.0)
+            fps: Frames per second (default: 8, recommended: 8-12)
+            model: Image model to use - "dall-e-3" (photorealistic) or "FLUX.2-pro" (artistic)
+            style: Visual style hint - "photorealistic", "artistic", "animated", "cinematic"
             
         Returns:
-            dict with 'success', 'video_url', and 'message'
+            dict with 'success', 'video_url', 'metadata', 'implementation_note', and 'message'
         """
-        target_model = model or self.sora_model
-        client = self._get_client_for_model(target_model)
-
-        if not client:
-            return {"success": False, "message": "Service not configured"}
-        
         try:
-            logger.info(f"Generating video with model {target_model} and prompt: {prompt[:100]}...")
+            # Import video service (lazy import to avoid circular dependencies)
+            from services.video_service import get_video_service
             
-            # Note: This is a placeholder for the actual Sora API call
-            # As of now, Sora might use a different client method or REST API
-            # We'll attempt a standard generation call or log a placeholder
+            video_service = get_video_service(self)
             
-            logger.warning(f"Video generation with {target_model} requested but API implementation is pending SDK update.")
+            result = video_service.generate_video_from_prompt(
+                prompt=prompt,
+                duration=duration,
+                fps=fps,
+                model=model,
+                style=style
+            )
             
-            return {
-                "success": False, 
-                "message": f"Video generation with {target_model} is provisioned but requires SDK update.",
-                "video_url": None
-            }
+            return result
             
         except Exception as e:
-            logger.error(f"Error generating video: {e}")
-            return {"success": False, "message": str(e)}
+            logger.error(f"Error generating video: {e}", exc_info=True)
+            return {
+                "success": False, 
+                "message": f"Error generating video: {str(e)}",
+                "video_url": None
+            }
 
     def _get_client_for_model(self, model: str):
         endpoint = self.model_endpoints.get(model) or self.endpoint
         key = self.model_keys.get(model) or self.api_key
-        if not endpoint or not key:
+        
+        if not endpoint:
             return None
-
-        cache_key = f"{endpoint}|{key}"
+            
+        # If key is missing or explicitly set to MANAGED_IDENTITY, use Managed Identity
+        use_mi = not key or key == "MANAGED_IDENTITY"
+        
+        cache_key = f"{endpoint}|{key if key else 'MI'}"
         if cache_key not in self._clients:
             try:
-                self._clients[cache_key] = AzureOpenAI(
-                    azure_endpoint=endpoint,
-                    api_key=key,
-                    api_version=self.api_version
-                )
+                if use_mi:
+                    token_provider = get_bearer_token_provider(
+                        DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
+                    )
+                    self._clients[cache_key] = AzureOpenAI(
+                        azure_endpoint=endpoint,
+                        azure_ad_token_provider=token_provider,
+                        api_version=self.api_version
+                    )
+                else:
+                    self._clients[cache_key] = AzureOpenAI(
+                        azure_endpoint=endpoint,
+                        api_key=key,
+                        api_version=self.api_version
+                    )
             except Exception as e:
                 logger.error(f"Failed to init client for {model}: {e}")
                 return None

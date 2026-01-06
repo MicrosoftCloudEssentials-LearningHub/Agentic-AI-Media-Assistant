@@ -4,9 +4,10 @@ Includes MCP (Model Context Protocol) integration for tool calling.
 """
 import os
 import json
+import time
 from typing import List, Dict, Any
 try:
-    from azure.ai.projects import AIProjectClient  # type: ignore
+    from azure.ai.agents import AgentsClient  # type: ignore
     from azure.identity import DefaultAzureCredential  # type: ignore
     _REMOTE_AVAILABLE = True
 except Exception:
@@ -114,44 +115,52 @@ def create_function_tool_for_agent(agent_name: str) -> List[Dict[str, Any]]:
 
 
 class AgentProcessor:
-    """Handles communication with Microsoft Foundry agents"""
+    """Handles communication with Azure OpenAI models directly (no Agents API)"""
     
     def __init__(self, agent_id: str = None, project_endpoint: str = None):
         """
-        Initialize agent processor.
+        Initialize agent processor using Azure OpenAI directly.
         
         Args:
-            agent_id: The agent ID from Microsoft Foundry (if None, loads from AGENT_ORCHESTRATOR_ID env)
-            project_endpoint: Optional project endpoint (reads from env if not provided)
+            agent_id: Ignored - kept for compatibility
+            project_endpoint: Ignored - uses GPT endpoint from environment
         """
-        # Get agent ID from parameter or environment
-        self.agent_id = agent_id or os.environ.get("AGENT_ORCHESTRATOR_ID")
-        if not self.agent_id:
-            raise ValueError("agent_id must be provided or AGENT_ORCHESTRATOR_ID must be set")
+        from azure.ai.inference import ChatCompletionsClient
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+        from azure.core.credentials import AzureKeyCredential
         
-        # Get project endpoint from parameter or environment
-        self.project_endpoint = project_endpoint or os.environ.get("AZURE_AI_PROJECT_ENDPOINT") or os.environ.get("AZURE_AI_AGENT_ENDPOINT")
+        # Get GPT endpoint for orchestration
+        self.endpoint = os.environ.get("gpt_endpoint") or os.environ.get("AZURE_OPENAI_ENDPOINT")
+        api_key = os.environ.get("gpt_api_key") or os.environ.get("AZURE_OPENAI_API_KEY")
+        self.model = os.environ.get("gpt_deployment", "gpt-4o")
         
-        if not self.project_endpoint or not _REMOTE_AVAILABLE:
-            raise ValueError(f"Remote agent support unavailable (endpoint: {self.project_endpoint}, SDK available: {_REMOTE_AVAILABLE})")
+        if not self.endpoint:
+            raise ValueError("gpt_endpoint or AZURE_OPENAI_ENDPOINT must be set")
         
-        # Initialize AI Project Client - use new SDK constructor that requires subscription/resource group/project
-        subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID")
-        resource_group = os.environ.get("AZURE_RESOURCE_GROUP")
-        project_name = os.environ.get("AZURE_AI_PROJECT_NAME")
+        # Use Managed Identity if api_key is "MANAGED_IDENTITY"
+        if api_key == "MANAGED_IDENTITY":
+            print("[INFO] Using Managed Identity for Azure OpenAI authentication")
+            credential = DefaultAzureCredential()
+            token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
+            
+            # Create client with token provider
+            from azure.ai.inference.aio import ChatCompletionsClient as AsyncChatClient
+            from azure.core.credentials import AccessToken
+            
+            class TokenCredential:
+                def __init__(self, token_provider):
+                    self.token_provider = token_provider
+                def get_token(self, *scopes, **kwargs):
+                    token = self.token_provider()
+                    return AccessToken(token, 0)
+            
+            self.client = ChatCompletionsClient(endpoint=self.endpoint, credential=TokenCredential(token_provider))
+        else:
+            print("[INFO] Using API Key for Azure OpenAI authentication")
+            self.client = ChatCompletionsClient(endpoint=self.endpoint, credential=AzureKeyCredential(api_key))
         
-        if not all([subscription_id, resource_group, project_name]):
-            raise ValueError(f"AIProjectClient requires subscription_id, resource_group, and project_name. "
-                           f"Missing: {', '.join([k for k, v in {'AZURE_SUBSCRIPTION_ID': subscription_id, 'AZURE_RESOURCE_GROUP': resource_group, 'AZURE_AI_PROJECT_NAME': project_name}.items() if not v])}")
+        print(f"[INFO] Initialized Azure OpenAI client: {self.endpoint} / {self.model}")
         
-        self.client = AIProjectClient(
-            endpoint=self.project_endpoint,
-            subscription_id=subscription_id,
-            resource_group_name=resource_group,
-            project_name=project_name,
-            credential=DefaultAzureCredential()
-        )
-    
     def run_conversation_with_text_stream(
         self,
         user_message: str,
@@ -159,7 +168,7 @@ class AgentProcessor:
         additional_context: Dict[str, Any] = None
     ):
         """
-        Run a conversation with the agent and stream the response.
+        Run a conversation using Azure OpenAI directly.
         
         Args:
             user_message: The user's message
@@ -170,39 +179,26 @@ class AgentProcessor:
             Chunks of the agent's response
         """
         try:
-            # Create a thread for this conversation
-            thread = self.client.agents.create_thread()
+            # Build messages for Azure OpenAI
+            messages = [
+                {"role": "system", "content": "You are Zava Media Orchestrator. Analyze user requests for image and video processing. For cropping, background changes, thumbnails, or videos, explain what you would do. Currently in direct Azure OpenAI mode."}
+            ]
             
-            # Build the message content
-            message_content = user_message
-            if additional_context:
-                message_content = f"Context: {json.dumps(additional_context)}\n\nUser: {user_message}"
+            if conversation_history:
+                messages.extend(conversation_history[-5:])
             
-            # Add message to thread
-            self.client.agents.create_message(
-                thread_id=thread.id,
-                role="user",
-                content=message_content
+            messages.append({"role": "user", "content": user_message})
+            
+            # Call Azure OpenAI
+            response = self.client.complete(
+                messages=messages,
+                model=self.model,
+                temperature=0.7,
+                max_tokens=800
             )
             
-            # Run the agent
-            run = self.client.agents.create_and_process_run(
-                thread_id=thread.id,
-                assistant_id=self.agent_id
-            )
-            
-            # Get messages
-            messages = self.client.agents.list_messages(thread_id=thread.id)
-            
-            # Find the assistant's response
-            for message in messages:
-                if message.role == "assistant":
-                    for content in message.content:
-                        if hasattr(content, 'text'):
-                            yield content.text.value
-            
-            # Clean up
-            self.client.agents.delete_thread(thread.id)
+            # Yield the full response
+            yield response.choices[0].message.content
             
         except Exception as e:
             yield f"Error communicating with agent: {str(e)}"

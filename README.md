@@ -1,20 +1,19 @@
-# Demo: Zava Media AI Assistant <br/> Multi-Agent Architecture <br/> for Image & Video Processing - Overview 
-
-Costa Rica
+# Zava Media AI Assistant  
+**Multi-Agent Architecture for Image & Video Processing**
 
 [![GitHub](https://img.shields.io/badge/--181717?logo=github&logoColor=ffffff)](https://github.com/)
 [brown9804](https://github.com/brown9804)
 
-Last updated: 2025-12-10
+Last updated: 2025-12-31
 
 ----------
 
 <details>
 <summary><b>List of References</b> (Click to expand)</summary>
 
+- [Foundry Models sold directly by Azure](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/concepts/models-sold-directly-by-azure?view=foundry-classic&pivots=azure-openai&tabs=global-standard-aoai%2Cstandard-chat-completions%2Cglobal-standard#azure-openai-in-microsoft-foundry-models) - models available 
 - [Baseline architecture for an Azure Kubernetes Service (AKS) cluster](https://learn.microsoft.com/en-us/azure/architecture/reference-architectures/containers/aks/baseline-aks)
 - [Run your functions from a package file in Azure](https://learn.microsoft.com/en-us/azure/azure-functions/run-functions-from-deployment-package)
-- [Foundry Models sold directly by Azure](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/concepts/models-sold-directly-by-azure?view=foundry-classic&tabs=global-standard-aoai%2Cstandard-chat-completions%2Cglobal-standard&pivots=azure-openai)
 - [What is Microsoft Translator Pro?](https://learn.microsoft.com/en-us/azure/ai-services/translator/solutions/translator-pro/overview)
 - [Model leaderboards in Microsoft Foundry portal (preview)](https://learn.microsoft.com/en-us/azure/ai-foundry/concepts/model-benchmarks?view=foundry-classic)
 - [AI Leaderboards](https://llm-stats.com/) - general ref
@@ -24,11 +23,7 @@ Last updated: 2025-12-10
 </details>
 
 > [!IMPORTANT]
-> Disclaimer: This repository contains a demo of `Zava Media AI Assistant`, a multi-agent system implementing Agent-to-Agent (A2A) protocol for automated media generation and manipulation. It features a fully automated `"Zero-Touch" deployment` pipeline orchestrated by Terraform, which `provisions infrastructure, creates specialized AI agents for image/video tasks in MSFT Foundry, and deploys the complete A2A application stack.` Feel free to modify this as needed, it's just a reference. Please refer [TechWorkshop L300: AI Apps and Agents](https://microsoft.github.io/TechWorkshop-L300-AI-Apps-and-agents/), and if needed contact Microsoft directly: [Microsoft Sales and Support](https://support.microsoft.com/contactus?ContactUsExperienceEntryPointAssetId=S.HP.SMC-HOME) for more guidance. There are tons of free resources out there, all eager to support!
-
-> E.g 
-
-<img width="1585" height="972" alt="image" src="https://github.com/user-attachments/assets/900004c3-a0fd-4c20-bdff-464b03fe30ea" />
+> Disclaimer: This repository contains a demo of `Zava Media AI Assistant`, a multi-agent system implementing Agent-to-Agent (A2A) protocol for automated media generation and manipulation. It features a fully automated `"Zero-Touch" deployment` pipeline orchestrated by Terraform, which `provisions infrastructure, creates specialized AI agents for image/video tasks in MSFT Foundry, and deploys the complete A2A application stack.` Feel free to modify this as needed, it's just a reference. Please refer [TechWorkshop L300: AI Apps and Agents](https://microsoft.github.io/TechWorkshop-L300-AI-Apps-and-agents/), and if needed contact Microsoft directly: [Microsoft Sales and Support](https://support.microsoft.com/contactus?ContactUsExperienceEntryPointAssetId=S.HP.SMC-HOME) for more guidance.
 
 > [!IMPORTANT]
 > The deployment process typically takes 15-20 minutes
@@ -39,47 +34,77 @@ Last updated: 2025-12-10
 
 ## Key Features
 
-- **Media-Centric A2A Protocol**: Agent-to-Agent communication for complex image and video processing workflows
-- **5-Agent Architecture**: Specialized AI agents with proper delegation through A2A protocol:
-  - **Main Orchestrator**: Central request router that analyzes user requests, understands intent, and intelligently delegates tasks to specialized agents
-  - **Image Cropping Specialist**: Smart object detection and cropping capabilities  
-  - **Background Modification Agent**: Specialized in background removal, replacement, and scene adaptation
-  - **Thumbnail Generation Agent**: Composes final assets with text overlays and layout optimization
-  - **Video Processing Agent**: Specialized video analysis and frame extraction for video thumbnail generation
+- **Media-Centric AI Processing**: Specialized agents for image and video manipulation workflows
+- **5-Agent Architecture**: Specialized AI agents with intelligent task delegation:
+  - **Main Orchestrator**: Central request router that analyzes user requests and delegates to specialized agents
+  - **Image Cropping Specialist**: Smart object detection and cropping
+  - **Background Modification Agent**: Background removal/replacement
+  - **Thumbnail Generation Agent**: Composes final assets with text overlays
+  - **Video Processing Agent**: Video generation via image sequences (temporary until Sora-2 available)
 - **Real-Time Image Processing**: Upload or paste images directly into the chat for immediate agent action
-- **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents with proper delegation patterns
-- **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle including enhanced A2A framework deployment
-- **A2A Task Coordination**: Advanced inter-agent task delegation (e.g., "Crop this, then change background, then add text")
+- **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents
+- **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle
+- **Advanced Task Coordination**: Inter-agent task delegation (e.g., "Crop this, then change background, then add text")
 
-## About A2A Protocol
+## Specialized Models
 
-`A2A (Agent-to-Agent) Protocol is a standardized communication framework that enables multiple AI agents to collaborate and coordinate tasks seamlessly.`
+Each agent uses a specific model optimized for its task:
+- **GPT-4o**: Orchestration, routing, and **vision/image understanding** (multi-modal)
+- **GPT-4o-mini**: Smaller, faster model for general tasks
+- **DALL-E-3**: Image generation and synthesis
+- **FLUX.2-pro**: Advanced artistic image generation
+- **text-embedding-3-small**: Embeddings for vector search
+- **Sora**: Native video generation model
 
-> What is A2A Protocol?
+> [!NOTE]
+> **Multi-Model SME Collaboration for Image Generation**
+> 
+> This solution uses a **collaborative multi-agent approach** where multiple AI models work together as Subject Matter Experts (SMEs):
+> 
+> **Primary Team (Deploys Together):**
+> - **GPT-4o (Vision)**: Analyzes images, understands context, provides editing guidance
+> - **FLUX.2-pro**: Generates artistic, high-quality images
+> - **DALL-E-3**: Generates alternative styles and interpretations
+>
+> **How They Work Together:**
+> 1. **GPT-4o analyzes** the user's request and existing images using its vision capabilities
+> 2. **FLUX.2-pro generates** the primary artistic output
+> 3. **DALL-E-3 provides** alternative interpretations or refinements
+> 4. **GPT-4o evaluates** results and can request iterations
+> 5. System presents **multiple options** or blends the best elements
+>
+> **Benefits of Multi-Model Collaboration:**
+> - Higher quality results from combining different model strengths
+> - More creative variety with different artistic styles
+> - Better accuracy through GPT-4o's vision-based validation
+> - Redundancy: if one model fails/unavailable, others continue working
+>
+> **Quota Considerations**: 
+> - All models attempt to deploy during `terraform apply`
+> - If DALL-E-3 quota unavailable: **GPT-4o + FLUX.2-pro** continue as SME team
+> - If FLUX.2-pro unavailable: **GPT-4o + DALL-E-3** work together
+> - Minimum viable: **GPT-4o alone** (has vision + basic image capabilities)
+> - To request quota: [Azure Quota Increase Request](https://portal.azure.com/#blade/Microsoft_Azure_Support/HelpAndSupportBlade/newsupportrequest)
 
-- **Agent-to-Agent Communication**: Structured messaging between multiple AI agents
-- **Task Coordination**: Agents can delegate tasks to specialized agents
-- **Event-Driven Architecture**: Real-time event handling for agent interactions
-- **Agent Discovery**: Automatic detection and registration of available agents
-- **Protocol Standardization**: Consistent API for inter-agent communication
+> [!NOTE]
+> **Video Generation with Sora**
+> 
+> This solution now uses **Sora** (version 2025-05-02) for native video generation in Azure AI Foundry.
+> 
+> **Fallback Strategy**: If Sora is unavailable, the system falls back to generating image sequences using the SME team (GPT-4o + FLUX.2-pro + DALL-E-3) and stitching them into videos.
+>
+> **Sora Deployment**: The model is automatically deployed during `terraform apply` if available in your region.
 
-> A2A Components in This Project:
-
-- **Agent Execution Framework**: Manages multiple agent instances (`src/a2a/server/agent_execution.py`)
-- **Event System**: Handles inter-agent communication and delegation (`src/a2a/server/events/`)
-- **Task Coordination**: Advanced task delegation between specialized agents (`src/a2a/server/tasks.py`)
-- **Request Handlers**: Processes agent-to-agent requests with delegation routing (`src/a2a/server/request_handlers.py`)
-- **Coordinator Agent**: Orchestrates complex multi-agent workflows (`src/a2a/agent/coordinator.py`)
-- **Specialized Agents**: Cropping, Background, and Thumbnail agents (`src/app/agents/thumbnail_agents.py`)
-- **API Endpoints**: RESTful and WebSocket APIs for enhanced agent communication (`src/a2a/api/`)
-
-> A2A vs Traditional Multi-Agent Systems:
-
-- **Standardized Protocol**: Uses consistent message formats and APIs
-- **Scalable Architecture**: Easily add new agents without modifying existing ones
-- **Real-time Communication**: WebSocket support for instant agent interactions
-- **Event-Driven**: Asynchronous event handling for better performance
-- **Infrastructure Integration**: Full Terraform deployment with monitoring and automation
+> [!WARNING]
+> **Azure Quota and Model Availability**
+> The models listed above (`gpt-4o`, `dall-e-3`, `FLUX.2-pro`, etc.) are the recommended, state-of-the-art choices for these media tasks. However, they require significant GPU capacity and are subject to strict Azure quotas.
+>
+> **If you encounter deployment errors related to "Insufficient Quota", it means your Azure subscription does not have access to these models in the selected region.**
+>
+> To resolve this, you must [request a quota increase from Microsoft Azure](https://portal.azure.com/#blade/Microsoft_Azure_Support/HelpAndSupportBlade/newsupportrequest).
+>
+> ### Alternative Models (Quota-Friendly)
+> As a fallback, this project is configured to use `gpt-4o-mini` for all agent tasks. This model is more widely available and has less restrictive quotas. While not as powerful as the specialized models, `gpt-4o-mini` provides a good baseline for multi-modal tasks and allows the application to run successfully even without access to the larger models.
 
 ## Architecture
 
@@ -87,16 +112,19 @@ Last updated: 2025-12-10
 graph TD
     User[User] <--> UI[Media Studio UI]
     UI <--> App[FastAPI Application]
-    App <--> A2A[A2A Protocol Server]
-    A2A <--> Orchestrator[Main Orchestrator/Router]
+    App <--> Orchestrator[Main Orchestrator<br/>GPT-4o]
+    
     Orchestrator <--> Crop[Cropping Agent]
     Orchestrator <--> BG[Background Agent]
-    Orchestrator <--> Gen[Thumbnail Generator]
+    Orchestrator <--> Thumb[Thumbnail Generator]
+    Orchestrator <--> Video[Video Agent<br/>Image Sequences]
     
-    subgraph "A2A Communication"
-        Orchestrator <--> Crop
-        Orchestrator <--> BG
-        Orchestrator <--> Gen
+    subgraph "Azure AI Foundry"
+        Orchestrator
+        Crop
+        BG
+        Thumb
+        Video
     end
 ```
 
@@ -105,90 +133,50 @@ graph TD
 > When you run `terraform apply`, the following automated sequence occurs:
 
 1. **Infrastructure Provisioning**:
-   - Creates Resource Group, Cosmos DB, MSFT Foundry, AI Search, Storage Account, Key Vault, and Container Registry (ACR).
-   - Deploys AI Models (`gpt-4o-mini`, `text-embedding-3-small`) with AI Foundry Router as core orchestrator.
-   - Sets up A2A protocol infrastructure including event queues and monitoring.
+   - Creates Resource Group, Azure AI Foundry, Key Vault, Storage Account, and Container Registry (ACR)
+   - Deploys specialized AI Models:
+     - **GPT-4o** (Orchestration and main reasoning)
+     - **GPT-4o-mini** (Fast, efficient general tasks)
+     - **DALL-E-3** (Image generation)
+     - **FLUX.2-pro** (Advanced artistic images)
+     - **text-embedding-3-small** (Vector embeddings)
+     - **Video**: Image sequences via DALL-E-3/FLUX.2-pro (temporary until Sora-2 available)
+   - All models use **Managed Identity** for secure authentication (no API keys stored)
 
-      > E.g 
-  
-       <img width="1850" height="794" alt="image" src="https://github.com/user-attachments/assets/ed17ee51-f7fa-427f-a5d2-062ca3ab3c76" />
-
-2. **A2A Framework Deployment**:
-   - Initializes the Agent-to-Agent protocol server components.
-   - Sets up event queue system for inter-agent communication.
-   - Configures agent discovery and registration services.
-   - Deploys A2A monitoring and automation frameworks.
-
-3. **Data Pipeline Execution**:
-   - Sets up a Python virtual environment.
-   - Ingests `product_catalog.csv` into Cosmos DB with A2A event notifications.
-
-        > E.g 
-
-   
-   - Creates and populates an Azure AI Search index with vector embeddings through A2A coordination.
-
-        > E.g 
-        
-
-4. **Automated Agent Creation & A2A Registration**:
-   - **Fully automated by terraform**: No manual intervention required
+2. **Automated Agent Creation**:
+   - **Fully automated by Terraform**: No manual intervention required
    - Installs the `azure-ai-projects` SDK and connects to MSFT Foundry
-   - Creates 5 specialized media processing agents:
-     - **Main Orchestrator**: Central request router and task coordinator
-     - **Image Cropping Specialist**: Smart object detection and cropping
-     - **Background Modification Agent**: Background removal and replacement
-     - **Thumbnail Generation Agent**: Final asset composition with text overlays
-     - **Video Processing Agent**: Video analysis and frame extraction
+   - Creates specialized media processing agents with specific model assignments
    - Automatically stores agent IDs in Azure Key Vault for secure access
    - Web app retrieves agent configuration from Key Vault automatically
-   - **Zero manual configuration** - terraform handles all agent deployment and setup
+   - **Zero manual configuration** - Terraform handles all agent deployment and setup
 
-      > E.g 
-      
-
-5. **Application Deployment**:
-   - Builds the Docker container with A2A protocol support in the cloud (ACR Build).
-   - Configures the Azure Web App with the generated Agent IDs, A2A endpoints, and credentials.
-   - Deploys the container with A2A server components and restarts the app.
+3. **Application Deployment**:
+   - Builds the Docker container in the cloud (ACR Build)
+   - Configures the Azure Web App with the generated Agent IDs and Managed Identity
+   - Deploys the container and restarts the app
 
 ## Verification
 
 > After deployment completes, verify the system:
 
 1. **Check the Web App**:
-   - The Terraform output will provide the `application_url`.
-   - Visit `https://<your-app-name>.azurewebsites.net`.
-   - You should see the Zava chat interface with A2A protocol support.
+   - The Terraform output will provide the `application_url`
+   - Visit `https://<your-app-name>.azurewebsites.net`
+   - You should see the Zava Media AI interface
 
-      > E.g 
-      
-
-2. **Verify A2A Protocol Endpoints**:
-   - Check A2A Chat API: `https://<your-app-name>.azurewebsites.net/a2a/chat`
-   - Check A2A Server API: `https://<your-app-name>.azurewebsites.net/a2a/api/docs`
-   - Verify agent discovery: `https://<your-app-name>.azurewebsites.net/a2a/server/agents`
-
-3. **Verify Enhanced Agent Architecture**:
-   - Go to the [MSFT Foundry Portal](https://ai.azure.com).
-   - Navigate to your project -> **Build** -> **Agents**.
-   - You should see the 5 specialized media agents listed:
-     - Main Orchestrator - Request Router
-     - Image Cropping Specialist  
-     - Background Modification Agent
-     - Thumbnail Generation Agent
-     - Video Processing Agent
+2. **Verify Agent Architecture**:
+   - Go to the [MSFT Foundry Portal](https://ai.azure.com)
+   - Navigate to your project -> **Build** -> **Agents**
+   - You should see the specialized media agents listed with their assigned models
    - **Agent IDs are automatically stored in Azure Key Vault** and retrieved by the web app
 
-      > E.g 
-      
-
-4. **Test Enhanced A2A Interactions**: For example:
-   - **General**: "Hi, I need a thumbnail for my video."
-   - **Cropping**: "Crop the person from this image."
-   - **Background**: "Change the background to a neon city."
-   - **Thumbnail**: "Create a thumbnail with the text 'EPIC WIN'."
-   - **Multi-Agent**: "Crop the car, put it on a race track background, and add the text 'SPEED' in red."
+3. **Test Media Processing**: For example:
+   - **Image Upload**: Upload an image and ask "Crop the main subject"
+   - **Background**: "Change the background to a beach scene"
+   - **Thumbnail**: "Create a thumbnail with the text 'AMAZING'"
+   - **Multi-Step**: "Crop the car, put it on a race track background, and add the text 'SPEED' in red"
+   - **Video**: "Generate a 5-second video of a sunset over mountains"
 
 <!-- START BADGE -->
 <div align="center">

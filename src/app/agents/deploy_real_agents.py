@@ -61,7 +61,7 @@ def deploy_agents():
                 "- If the user wants to create a video, delegate to the 'video_agent'. "
                 "- For general questions, answer them yourself."
             ),
-            "model": "gpt-4o"  # Upgraded to GPT-4o for better coordination
+            "model": "gpt-4o"  # Primary orchestration using GPT-4o
         },
         {
             "name": "Cropping Specialist",
@@ -70,7 +70,7 @@ def deploy_agents():
                 "You are the Cropping Specialist. Your task is to identify objects in images and provide cropping coordinates or cropped images. "
                 "You use advanced vision models to detect subjects and understand image content."
             ),
-            "model": "gpt-4o"  # Using GPT-4o for advanced image analysis
+            "model": "gpt-4o"  # Using GPT-4o for vision capabilities
         },
         {
             "name": "Background Specialist",
@@ -79,7 +79,7 @@ def deploy_agents():
                 "You are the Background Specialist. Your task is to remove or replace backgrounds in images. "
                 "You can create new backgrounds based on text descriptions using advanced AI capabilities."
             ),
-            "model": "gpt-4o"  # Using GPT-4o for sophisticated background processing
+            "model": "FLUX.2-pro"  # FLUX.2-pro for background generation
         },
         {
             "name": "Thumbnail Generator",
@@ -88,19 +88,27 @@ def deploy_agents():
                 "You are the Thumbnail Generator. Your task is to create eye-catching video thumbnails. "
                 "You combine images, text, and effects to maximize click-through rates using advanced design strategies."
             ),
-            "model": "gpt-4o"  # Using GPT-4o for intelligent thumbnail design
+            "model": "dall-e-3"  # DALL-E 3 for thumbnail creation
         },
         {
             "name": "Video Agent",
             "env_var": "video_agent",
             "instructions": (
                 "You are the Video Agent. Your task is to create and process video content. "
-                "You can analyze videos, provide editing recommendations, and suggest video enhancements."
+                "You can analyze videos, provide editing recommendations, and suggest video enhancements. "
+                "Note: Advanced video generation capabilities are currently limited."
             ),
-            "model": "gpt-4o"  # Using GPT-4o for advanced video processing capabilities
+            "model": "gpt-4o"  # Using GPT-4o (sora-2 not yet available)
         }
     ]
-
+    # --- Model Deployment Note ---
+    # The models used by the agents (gpt-4o, dall-e-3, etc.) are the recommended, state-of-the-art choices.
+    # However, they are subject to Azure quota limits. If you encounter "InsufficientQuota" errors during
+    # Terraform deployment, it means your subscription does not have access to these models.
+    #
+    # As a fallback, this script is configured to use `gpt-4o-mini` for all agents, which is more
+    # widely available. To use the larger models, you must first request a quota increase from Microsoft.
+    # ---
     # Load prior state (instruction hashes) if present
     # Write to terraform temp directory instead of src/app/agents
     terraform_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "terraform-infrastructure")
@@ -120,8 +128,24 @@ def deploy_agents():
     try:
         print("Initializing Azure AI Project Client...")
         
-        # Use DefaultAzureCredential for authentication
-        credential = DefaultAzureCredential()
+        # Use DefaultAzureCredential with correct scope for Azure AI
+        # The Azure AI Foundry API requires tokens scoped to https://ai.azure.com
+        from azure.core.credentials import AccessToken
+        from datetime import datetime
+        
+        base_credential = DefaultAzureCredential()
+        
+        # Create a wrapper credential that requests tokens with the correct audience
+        class AzureAIScopedCredential:
+            """Wrapper credential that requests tokens with the correct Azure AI audience."""
+            def __init__(self, credential):
+                self._credential = credential
+            
+            def get_token(self, *scopes, **kwargs):
+                # Request token with Azure AI audience
+                return self._credential.get_token("https://ai.azure.com/.default", **kwargs)
+        
+        credential = AzureAIScopedCredential(base_credential)
         
         # Get required environment variables
         sub_id = os.getenv("AZURE_SUBSCRIPTION_ID")

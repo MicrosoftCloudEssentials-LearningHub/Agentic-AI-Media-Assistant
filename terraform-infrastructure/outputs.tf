@@ -1,16 +1,6 @@
-output "cosmosDbEndpoint" {
-  value       = azurerm_cosmosdb_account.cosmos.endpoint
-  description = "Cosmos DB account endpoint"
-}
-
 output "storageAccountName" {
   value       = azapi_resource.storage.name
   description = "Storage account name"
-}
-
-output "searchServiceName" {
-  value       = azurerm_search_service.search.name
-  description = "Azure AI Search service name"
 }
 
 output "container_registry_name" {
@@ -69,31 +59,37 @@ output "application_insights_connection_string" {
   sensitive   = true
 }
 
-output "cosmos_db_name" {
-  value       = local.cosmos_db_name
-  description = "Cosmos DB database name"
-}
-
 output "ai_foundry_primary_endpoint" {
   value       = local.foundry_endpoints[local.primary_foundry_region]
   description = "Primary MSFT Foundry endpoint URL (chat region)"
 }
 
-# Real agent IDs & statuses (external data source from agents_state.json)
+output "ai_project_primary_endpoint" {
+  value       = local.ai_project_endpoints[local.primary_foundry_region]
+  description = "Primary AI Project endpoint URL for agents API"
+}
+
+# Agent secret names (backup approach for zero-touch deployment)
 output "agent_ids" {
   value = {
-    for k, v in data.external.agents_state.result :
-    k => v if length(regexall("_id$", k)) > 0
+    agent_orchestrator_id        = azurerm_key_vault_secret.agent_orchestrator_id.name
+    agent_cropping_agent_id      = azurerm_key_vault_secret.agent_cropping_agent_id.name
+    agent_background_agent_id    = azurerm_key_vault_secret.agent_background_agent_id.name
+    agent_thumbnail_generator_id = azurerm_key_vault_secret.agent_thumbnail_generator_id.name
+    agent_video_agent_id         = azurerm_key_vault_secret.agent_video_agent_id.name
   }
-  description = "Map of agent environment variable names to their resolved IDs"
+  description = "Map of agent secret names for backup agent configuration"
 }
 
 output "agent_statuses" {
   value = {
-    for k, v in data.external.agents_state.result :
-    k => v if length(regexall("_status$", k)) > 0
+    agent_orchestrator_id        = "backup"
+    agent_cropping_agent_id      = "backup"
+    agent_background_agent_id    = "backup"
+    agent_thumbnail_generator_id = "backup"
+    agent_video_agent_id         = "backup"
   }
-  description = "Map of agent environment variable names to provisioning statuses (created/existing/updated/etc.)"
+  description = "Status of agent secrets (backup mode for zero-touch deployment)"
 }
 
 output "key_vault_name" {
@@ -199,8 +195,6 @@ output "application_instructions" {
   AZURE RESOURCES:
     - Resource Group: ${azurerm_resource_group.rg.name}
     - AI Foundry (primary): ${local.foundry_names[local.primary_foundry_region]}
-    - Cosmos DB: ${local.cosmos_account_name}
-    - Search Service: ${local.search_service_name}
     - Container Registry: ${local.registry_name}
 
   ============================================================================
@@ -266,9 +260,7 @@ output "deployment_summary" {
         health  = "https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/health"
       } : null
     }
-    data_services = {
-      cosmos_endpoint = azurerm_cosmosdb_account.cosmos.endpoint
-      search_endpoint = "https://${azurerm_search_service.search.name}.search.windows.net"
+    storage = {
       storage_account = local.storage_account
     }
   }
