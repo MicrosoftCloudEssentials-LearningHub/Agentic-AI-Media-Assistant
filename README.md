@@ -12,6 +12,8 @@ Last updated: 2025-12-31
 <summary><b>List of References</b> (Click to expand)</summary>
 
 - [Foundry Models sold directly by Azure](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/concepts/models-sold-directly-by-azure?view=foundry-classic&pivots=azure-openai&tabs=global-standard-aoai%2Cstandard-chat-completions%2Cglobal-standard#azure-openai-in-microsoft-foundry-models) - models available 
+- [Timelines for Foundry Models](https://learn.microsoft.com/en-us/azure/ai-foundry/concepts/model-lifecycle-retirement?view=foundry-classic#timelines-for-foundry-models) - retirement dates
+- [Azure OpenAI in Microsoft Foundry model deprecations and retirements](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/model-retirements?view=foundry-classic&tabs=text#current-models) - deprecation Date
 - [Baseline architecture for an Azure Kubernetes Service (AKS) cluster](https://learn.microsoft.com/en-us/azure/architecture/reference-architectures/containers/aks/baseline-aks)
 - [Run your functions from a package file in Azure](https://learn.microsoft.com/en-us/azure/azure-functions/run-functions-from-deployment-package)
 - [What is Microsoft Translator Pro?](https://learn.microsoft.com/en-us/azure/ai-services/translator/solutions/translator-pro/overview)
@@ -51,60 +53,49 @@ Last updated: 2025-12-31
 Each agent uses a specific model optimized for its task:
 - **GPT-4o**: Orchestration, routing, and **vision/image understanding** (multi-modal)
 - **GPT-4o-mini**: Smaller, faster model for general tasks
-- **DALL-E-3**: Image generation and synthesis
 - **FLUX.2-pro**: Advanced artistic image generation
-- **text-embedding-3-small**: Embeddings for vector search
+- **FLUX.1-Kontext-pro**: Contextual image understanding and document analysis
 - **Sora**: Native video generation model
 
 > [!NOTE]
-> **Multi-Model SME Collaboration for Image Generation**
+> **Multi-Model SME Collaboration**
 > 
 > This solution uses a **collaborative multi-agent approach** where multiple AI models work together as Subject Matter Experts (SMEs):
 > 
-> **Primary Team (Deploys Together):**
-> - **GPT-4o (Vision)**: Analyzes images, understands context, provides editing guidance
-> - **FLUX.2-pro**: Generates artistic, high-quality images
-> - **DALL-E-3**: Generates alternative styles and interpretations
+> **Deployed Model Team:**
+> - **GPT-4o (Vision & Orchestration)**: Analyzes images, understands context, routes requests, provides editing guidance
+> - **GPT-4o-mini (Fast Tasks)**: Quick responses, lightweight operations, agent coordination
+> - **FLUX.2-pro (Image Generation)**: Creates artistic, high-quality images from prompts
+> - **FLUX.1-Kontext-pro (Document/Context Analysis)**: Understands image context, extracts text, analyzes documents
+> - **Sora (Video Generation)**: Native video creation from prompts or image sequences
 >
 > **How They Work Together:**
-> 1. **GPT-4o analyzes** the user's request and existing images using its vision capabilities
-> 2. **FLUX.2-pro generates** the primary artistic output
-> 3. **DALL-E-3 provides** alternative interpretations or refinements
-> 4. **GPT-4o evaluates** results and can request iterations
-> 5. System presents **multiple options** or blends the best elements
+> 1. **GPT-4o** analyzes user requests and existing images using vision capabilities
+> 2. **FLUX.1-Kontext-pro** extracts context, text, and document information from images
+> 3. **FLUX.2-pro** generates artistic images based on analyzed context
+> 4. **GPT-4o** evaluates results and orchestrates multi-step workflows
+> 5. **Sora** creates videos when video output is requested
 >
-> **Benefits of Multi-Model Collaboration:**
-> - Higher quality results from combining different model strengths
-> - More creative variety with different artistic styles
-> - Better accuracy through GPT-4o's vision-based validation
-> - Redundancy: if one model fails/unavailable, others continue working
+> **Benefits of Specialized SME Models:**
+> - Each model excels at its specific domain (no overlap)
+> - Higher quality through specialization vs. one general-purpose model
+> - Better performance: lightweight models for simple tasks, powerful models for complex ones
+> - Clear separation of concerns: vision, generation, context, video
 >
-> **Quota Considerations**: 
-> - All models attempt to deploy during `terraform apply`
-> - If DALL-E-3 quota unavailable: **GPT-4o + FLUX.2-pro** continue as SME team
-> - If FLUX.2-pro unavailable: **GPT-4o + DALL-E-3** work together
-> - Minimum viable: **GPT-4o alone** (has vision + basic image capabilities)
-> - To request quota: [Azure Quota Increase Request](https://portal.azure.com/#blade/Microsoft_Azure_Support/HelpAndSupportBlade/newsupportrequest)
-
 > [!NOTE]
 > **Video Generation with Sora**
 > 
-> This solution now uses **Sora** (version 2025-05-02) for native video generation in Azure AI Foundry.
+> This solution uses **Sora** (version 2025-05-02) for native video generation in Azure AI Foundry.
 > 
-> **Fallback Strategy**: If Sora is unavailable, the system falls back to generating image sequences using the SME team (GPT-4o + FLUX.2-pro + DALL-E-3) and stitching them into videos.
->
-> **Sora Deployment**: The model is automatically deployed during `terraform apply` if available in your region.
+> **Sora Deployment**: The model is automatically deployed during `terraform apply`.
 
 > [!WARNING]
 > **Azure Quota and Model Availability**
-> The models listed above (`gpt-4o`, `dall-e-3`, `FLUX.2-pro`, etc.) are the recommended, state-of-the-art choices for these media tasks. However, they require significant GPU capacity and are subject to strict Azure quotas.
+> The models deployed (`GPT-4o`, `FLUX.2-pro`, `FLUX.1-Kontext-pro`, `Sora`) require GPU capacity and are subject to Azure quotas.
 >
-> **If you encounter deployment errors related to "Insufficient Quota", it means your Azure subscription does not have access to these models in the selected region.**
+> **If you encounter deployment errors related to "Insufficient Quota"**, request a quota increase: [Azure Support](https://portal.azure.com/#blade/Microsoft_Azure_Support/HelpAndSupportBlade/newsupportrequest)
 >
-> To resolve this, you must [request a quota increase from Microsoft Azure](https://portal.azure.com/#blade/Microsoft_Azure_Support/HelpAndSupportBlade/newsupportrequest).
->
-> ### Alternative Models (Quota-Friendly)
-> As a fallback, this project is configured to use `gpt-4o-mini` for all agent tasks. This model is more widely available and has less restrictive quotas. While not as powerful as the specialized models, `gpt-4o-mini` provides a good baseline for multi-modal tasks and allows the application to run successfully even without access to the larger models.
+> **Current Deployment** uses GPT-4o-mini for fast tasks and specialized models for domain-specific operations.
 
 ## Architecture
 

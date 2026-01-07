@@ -71,24 +71,28 @@ output "ai_project_primary_endpoint" {
 
 # Agent secret names (backup approach for zero-touch deployment)
 output "agent_ids" {
-  value = {
-    agent_orchestrator_id        = azurerm_key_vault_secret.agent_orchestrator_id.name
-    agent_cropping_agent_id      = azurerm_key_vault_secret.agent_cropping_agent_id.name
-    agent_background_agent_id    = azurerm_key_vault_secret.agent_background_agent_id.name
-    agent_thumbnail_generator_id = azurerm_key_vault_secret.agent_thumbnail_generator_id.name
-    agent_video_agent_id         = azurerm_key_vault_secret.agent_video_agent_id.name
-  }
+  value = var.enable_ai_automation ? {
+    for k, v in {
+      agent_orchestrator_id        = azurerm_key_vault_secret.agent_orchestrator_id.name
+      agent_cropping_agent_id      = azurerm_key_vault_secret.agent_cropping_agent_id.name
+      agent_background_agent_id    = azurerm_key_vault_secret.agent_background_agent_id.name
+      agent_thumbnail_generator_id = azurerm_key_vault_secret.agent_thumbnail_generator_id.name
+      agent_video_agent_id         = azurerm_key_vault_secret.agent_video_agent_id.name
+    } : k => v
+  } : {}
   description = "Map of agent secret names for backup agent configuration"
 }
 
 output "agent_statuses" {
-  value = {
-    agent_orchestrator_id        = "backup"
-    agent_cropping_agent_id      = "backup"
-    agent_background_agent_id    = "backup"
-    agent_thumbnail_generator_id = "backup"
-    agent_video_agent_id         = "backup"
-  }
+  value = var.enable_ai_automation ? {
+    for agent_name in [
+      "agent_orchestrator_id",
+      "agent_cropping_agent_id",
+      "agent_background_agent_id",
+      "agent_thumbnail_generator_id",
+      "agent_video_agent_id"
+    ] : agent_name => "backup"
+  } : {}
   description = "Status of agent secrets (backup mode for zero-touch deployment)"
 }
 
@@ -126,11 +130,8 @@ output "key_vault_uri" {
 # }
 
 output "deployed_models" {
-  value = var.enable_ai_automation ? [
-    "gpt-4o-mini",
-    "text-embedding-3-small"
-  ] : []
-  description = "List of AI models actually deployed (phi-4 not available in this region)"
+  value       = var.enable_ai_automation ? keys(local.ai_model_specs) : []
+  description = "List of AI models deployed across all regions"
 }
 
 output "env_file_location" {
@@ -187,10 +188,7 @@ output "application_instructions" {
     (Automation starts with the app container; no manual scripts required)
 
   TEST PROMPTS:
-    - "What colors of paint do you have available?"
-    - "Tell me about lattices"
-    - "Where can I find your store?"
-    - "Do you have history books?" (tests scope limits)
+    ${var.enable_ai_automation ? "- Test the deployed AI agents with sample queries" : "- AI automation disabled - configure agents manually"}
 
   AZURE RESOURCES:
     - Resource Group: ${azurerm_resource_group.rg.name}

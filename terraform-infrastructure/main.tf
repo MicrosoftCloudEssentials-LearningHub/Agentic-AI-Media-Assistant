@@ -73,8 +73,8 @@ locals {
     "gpt-4o"                 = "swedencentral",
     "gpt-4o-mini"            = "swedencentral",
     "dall-e-3"               = "swedencentral",
-    "FLUX.2-pro"             = "swedencentral",
-    "sora-2"                 = "swedencentral",
+    "FLUX.2-pro"             = "eastus",        # East US - Sweden quota exhausted
+    "sora"                   = "swedencentral",
   }, local.model_regions_overrides)
   model_regions_filtered      = { for k, v in local.model_regions_final : k => v if v != "unavailable" }
   foundry_regions             = distinct(values(local.model_regions_filtered))
@@ -141,7 +141,7 @@ locals {
       sku_name      = "Standard"
       sku_capacity  = 2
     }
-    "sora-2" = {
+    "sora" = {
       model_name    = "sora"
       model_version = "2025-05-02"
       model_format  = "OpenAI"
@@ -200,6 +200,7 @@ resource "azapi_resource" "ai_foundry" {
       customSubDomainName    = local.foundry_names[each.key]
       disableLocalAuth       = false
       publicNetworkAccess    = "Enabled"
+      restore                = false  # Disable soft-delete - purge immediately when deleted
     }
   })
   
@@ -316,79 +317,10 @@ resource "azapi_resource" "flux_2_pro_deployment" {
   }
 }
 
-# DALL-E-3 deployment - Secondary image generation option
-resource "azapi_resource" "dalle3_deployment" {
-  type                      = "Microsoft.CognitiveServices/accounts/deployments@2024-10-01"
-  name                      = "dall-e-3"
-  parent_id                 = azapi_resource.ai_foundry[local.model_region_map["dall-e-3"]].id
-  schema_validation_enabled = false
+# DALL-E-3 deployment REMOVED - Permanent quota exhaustion (2/2 capacity used)
+# Using FLUX.2-pro for image generation instead
 
-  depends_on = [
-    azapi_resource.ai_foundry,
-    time_sleep.wait_for_foundry_propagation,
-    azapi_resource.flux_2_pro_deployment
-  ]
-
-  body = jsonencode({
-    properties = {
-      model = {
-        format  = "OpenAI"
-        name    = "dall-e-3"
-        version = "3.0"
-      }
-      raiPolicyName = "Microsoft.DefaultV2"
-    }
-    sku = {
-      name     = "Standard"
-      capacity = 1
-    }
-  })
-
-  timeouts {
-    create = "30m"
-    update = "30m"
-    delete = "30m"
-  }
-  
-  lifecycle {
-    ignore_changes = all
-  }
-}
-
-# Sora video generation model deployment
-resource "azapi_resource" "sora_deployment" {
-  type                      = "Microsoft.CognitiveServices/accounts/deployments@2024-10-01"
-  name                      = "sora"
-  parent_id                 = azapi_resource.ai_foundry[local.model_region_map["sora-2"]].id
-  schema_validation_enabled = false
-
-  depends_on = [
-    azapi_resource.ai_foundry,
-    time_sleep.wait_for_foundry_propagation,
-    azapi_resource.flux_2_pro_deployment
-  ]
-
-  body = jsonencode({
-    properties = {
-      model = {
-        format  = "OpenAI"
-        name    = "sora"
-        version = "2025-05-02"
-      }
-      raiPolicyName = "Microsoft.DefaultV2"
-    }
-    sku = {
-      name     = "GlobalStandard"
-      capacity = 10
-    }
-  })
-
-  timeouts {
-    create = "30m"
-    update = "30m"
-    delete = "30m"
-  }
-}
+# Sora deployment managed by null_resource.ai_model_deployments
 
 # Log Analytics Workspace
 resource "azurerm_log_analytics_workspace" "law" {

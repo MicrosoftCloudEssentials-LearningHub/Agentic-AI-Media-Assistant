@@ -1,4 +1,4 @@
-resource_group_name = "RG-AI-Mediaxi14"
+resource_group_name = "RG-AI-Mediaxi22"
 location            = "eastus2"
 name_prefix         = "zava"
 app_service_location = "westus3"
