@@ -32,6 +32,7 @@ Last updated: 2026-01-07
 
 > [!IMPORTANT]
 > The deployment process `typically takes 15-20 minutes`
+>
 > 1. Adjust [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) values 
 > 2. Initialize terraform with `terraform init`. Click here to [understand more about the deployment process](./terraform-infrastructure/README.md)
 > 3. Run `terraform apply` - this automatically handles **all** deployment including agent creation and configuration
@@ -89,7 +90,6 @@ Last updated: 2026-01-07
 > - Higher quality through specialization vs. one general-purpose model
 > - Better performance: lightweight models for simple tasks, powerful models for complex ones
 > - Clear separation of concerns: vision, generation, context, video
-
 
 > [!NOTE]
 > **Video Generation with Sora**: This solution uses **Sora** (version 2025-05-02) for native video generation in Azure AI Foundry.
