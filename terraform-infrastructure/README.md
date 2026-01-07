@@ -35,7 +35,7 @@ Last updated: 2026-01-07
 
 | East US | Sweden Central | 
 | --- | ---- | 
-| <img width="1891" height="417" alt="image" src="https://github.com/user-attachments/assets/edee7ca9-5148-4ee0-b461-1b8960550226" /> | <img width="1893" height="433" alt="image" src="https://github.com/user-attachments/assets/97da47c0-28f6-4453-a52d-8993f2ecf7ab" /> | 
+| <img width="1891" height="417" alt="image" src="https://github.com/user-attachments/assets/edee7ca9-5148-4ee0-b461-1b8960550226" /> | <img width="1892" height="478" alt="image" src="https://github.com/user-attachments/assets/92d00545-757a-462a-8bba-a42a1cbc5eff" /> | 
 
 ## Prerequisites
 
