@@ -26,9 +26,12 @@ Last updated: 2026-01-07
 > [!IMPORTANT]
 > Disclaimer: This repository contains a demo of `Zava Media AI Assistant`, a multi-agent system implementing Agent-to-Agent (A2A) protocol for automated media generation and manipulation. It features a fully automated `"Zero-Touch" deployment` pipeline orchestrated by Terraform, which `provisions infrastructure, creates specialized AI agents for image/video tasks in MSFT Foundry, and deploys the complete A2A application stack.` Feel free to modify this as needed, it's just a reference. Please refer [TechWorkshop L300: AI Apps and Agents](https://microsoft.github.io/TechWorkshop-L300-AI-Apps-and-agents/), and if needed contact Microsoft directly: [Microsoft Sales and Support](https://support.microsoft.com/contactus?ContactUsExperienceEntryPointAssetId=S.HP.SMC-HOME) for more guidance.
 
+> E.g
+
+<img width="1681" height="1062" alt="image" src="https://github.com/user-attachments/assets/e3a780f7-6a58-4675-ad0f-53c5d994e934" />
+
 > [!IMPORTANT]
-> The deployment process typically takes 15-20 minutes
->
+> The deployment process `typically takes 15-20 minutes`
 > 1. Adjust [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) values 
 > 2. Initialize terraform with `terraform init`. Click here to [understand more about the deployment process](./terraform-infrastructure/README.md)
 > 3. Run `terraform apply` - this automatically handles **all** deployment including agent creation and configuration
@@ -50,7 +53,7 @@ Last updated: 2026-01-07
 
 ## Specialized Models
 
-Each agent uses a specialized model as its "brain" optimized for its domain:
+> Each agent uses a specialized model as its "brain" optimized for its domain:
 
 - **Model Router** (Orchestrator): Dynamically selects best LLM (gpt-4o/gpt-4o-mini)
 - **GPT-4o** (Cropping Agent): Vision and image understanding capabilities
@@ -60,9 +63,7 @@ Each agent uses a specialized model as its "brain" optimized for its domain:
 - **FLUX.1-Kontext-pro** (Document Agent): Contextual understanding and PDF/document processing
 
 > [!NOTE]
-> **Multi-Model SME Collaboration**
-> 
-> This solution uses a **collaborative multi-agent approach** where multiple AI models work together as Subject Matter Experts (SMEs):
+> **Multi-Model SME Collaboration**: This solution uses a **collaborative multi-agent approach** where multiple AI models work together as Subject Matter Experts (SMEs).
 > 
 > **Deployed Model Team:**
 >
@@ -88,12 +89,10 @@ Each agent uses a specialized model as its "brain" optimized for its domain:
 > - Higher quality through specialization vs. one general-purpose model
 > - Better performance: lightweight models for simple tasks, powerful models for complex ones
 > - Clear separation of concerns: vision, generation, context, video
->
+
+
 > [!NOTE]
-> **Video Generation with Sora**
-> 
-> This solution uses **Sora** (version 2025-05-02) for native video generation in Azure AI Foundry.
-> 
+> **Video Generation with Sora**: This solution uses **Sora** (version 2025-05-02) for native video generation in Azure AI Foundry.
 > **Sora Deployment**: The model is automatically deployed during `terraform apply`.
 
 > [!WARNING]
