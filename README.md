@@ -1,5 +1,4 @@
-# Zava Media AI Assistant  
-**Multi-Agent Architecture for Image & Video Processing**
+# Demo: Zava Media AI Assistant <br/> Multi-Agent Architecture <br/> for Image & Video Processing - Overview 
 
 [![GitHub](https://img.shields.io/badge/--181717?logo=github&logoColor=ffffff)](https://github.com/)
 [brown9804](https://github.com/brown9804)
