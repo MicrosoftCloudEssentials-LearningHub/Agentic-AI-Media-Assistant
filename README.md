@@ -51,6 +51,7 @@ Last updated: 2026-01-07
 ## Specialized Models
 
 Each agent uses a specialized model as its "brain" optimized for its domain:
+
 - **Model Router** (Orchestrator): Dynamically selects best LLM (gpt-4o/gpt-4o-mini)
 - **GPT-4o** (Cropping Agent): Vision and image understanding capabilities
 - **FLUX.2-pro** (Background Agent): Advanced artistic image generation and manipulation
@@ -64,6 +65,7 @@ Each agent uses a specialized model as its "brain" optimized for its domain:
 > This solution uses a **collaborative multi-agent approach** where multiple AI models work together as Subject Matter Experts (SMEs):
 > 
 > **Deployed Model Team:**
+>
 > - **Model Router (Orchestrator Agent)**: Dynamically routes to gpt-4o or gpt-4o-mini based on task complexity
 > - **GPT-4o (Cropping Agent)**: Analyzes images, detects objects, provides cropping coordinates using vision
 > - **FLUX.2-pro (Background Agent)**: Generates and manipulates backgrounds with advanced artistic capabilities
@@ -72,6 +74,7 @@ Each agent uses a specialized model as its "brain" optimized for its domain:
 > - **FLUX.1-Kontext-pro (Document Agent)**: Extracts text, analyzes PDFs, understands document context
 >
 > **How They Work Together:**
+>
 > 1. **Orchestrator** (model-router) analyzes user requests and routes to the appropriate specialist
 > 2. **Cropping Agent** (GPT-4o) uses vision to identify and crop objects from images
 > 3. **Background Agent** (FLUX.2-pro) creates or replaces backgrounds with artistic precision
@@ -80,6 +83,7 @@ Each agent uses a specialized model as its "brain" optimized for its domain:
 > 6. **Document Agent** (FLUX.1-Kontext-pro) processes PDFs and extracts structured information
 >
 > **Benefits of Specialized SME Models:**
+>
 > - Each model excels at its specific domain (no overlap)
 > - Higher quality through specialization vs. one general-purpose model
 > - Better performance: lightweight models for simple tasks, powerful models for complex ones
