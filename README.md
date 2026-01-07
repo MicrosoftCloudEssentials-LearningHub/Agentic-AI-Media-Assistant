@@ -36,13 +36,14 @@ Last updated: 2025-12-31
 
 ## Key Features
 
-- **Media-Centric AI Processing**: Specialized agents for image and video manipulation workflows
-- **5-Agent Architecture**: Specialized AI agents with intelligent task delegation:
-  - **Main Orchestrator**: Central request router that analyzes user requests and delegates to specialized agents
-  - **Image Cropping Specialist**: Smart object detection and cropping
-  - **Background Modification Agent**: Background removal/replacement
-  - **Thumbnail Generation Agent**: Composes final assets with text overlays
-  - **Video Processing Agent**: Video generation via image sequences (temporary until Sora-2 available)
+- **Media-Centric AI Processing**: Specialized agents for image, video, and document manipulation workflows
+- **6-Agent Architecture**: Specialized AI agents with intelligent task delegation:
+  - **Main Orchestrator**: Central request router (model-router) that analyzes user requests and delegates to specialized agents
+  - **Image Cropping Specialist**: Smart object detection and cropping (GPT-4o vision)
+  - **Background Modification Agent**: Background removal/replacement (FLUX.2-pro)
+  - **Thumbnail Generation Agent**: Creates eye-catching thumbnails (DALL-E 3)
+  - **Video Processing Agent**: Native video generation with Sora or image-sequence fallback
+  - **Document Processor**: PDF/document analysis and extraction (FLUX.1-Kontext-pro)
 - **Real-Time Image Processing**: Upload or paste images directly into the chat for immediate agent action
 - **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents
 - **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle
@@ -50,12 +51,13 @@ Last updated: 2025-12-31
 
 ## Specialized Models
 
-Each agent uses a specific model optimized for its task:
-- **GPT-4o**: Orchestration, routing, and **vision/image understanding** (multi-modal)
-- **GPT-4o-mini**: Smaller, faster model for general tasks
-- **FLUX.2-pro**: Advanced artistic image generation
-- **FLUX.1-Kontext-pro**: Contextual image understanding and document analysis
-- **Sora**: Native video generation model
+Each agent uses a specialized model as its "brain" optimized for its domain:
+- **Model Router** (Orchestrator): Dynamically selects best LLM (gpt-4o/gpt-4o-mini)
+- **GPT-4o** (Cropping Agent): Vision and image understanding capabilities
+- **FLUX.2-pro** (Background Agent): Advanced artistic image generation and manipulation
+- **DALL-E 3** (Thumbnail Generator): High-quality image creation for thumbnails
+- **Sora** (Video Agent): Native video generation from text prompts
+- **FLUX.1-Kontext-pro** (Document Agent): Contextual understanding and PDF/document processing
 
 > [!NOTE]
 > **Multi-Model SME Collaboration**
@@ -63,18 +65,20 @@ Each agent uses a specific model optimized for its task:
 > This solution uses a **collaborative multi-agent approach** where multiple AI models work together as Subject Matter Experts (SMEs):
 > 
 > **Deployed Model Team:**
-> - **GPT-4o (Vision & Orchestration)**: Analyzes images, understands context, routes requests, provides editing guidance
-> - **GPT-4o-mini (Fast Tasks)**: Quick responses, lightweight operations, agent coordination
-> - **FLUX.2-pro (Image Generation)**: Creates artistic, high-quality images from prompts
-> - **FLUX.1-Kontext-pro (Document/Context Analysis)**: Understands image context, extracts text, analyzes documents
-> - **Sora (Video Generation)**: Native video creation from prompts or image sequences
+> - **Model Router (Orchestrator Agent)**: Dynamically routes to gpt-4o or gpt-4o-mini based on task complexity
+> - **GPT-4o (Cropping Agent)**: Analyzes images, detects objects, provides cropping coordinates using vision
+> - **FLUX.2-pro (Background Agent)**: Generates and manipulates backgrounds with advanced artistic capabilities
+> - **DALL-E 3 (Thumbnail Agent)**: Creates eye-catching thumbnails and promotional images
+> - **Sora (Video Agent)**: Native video generation from text prompts with smooth, realistic motion
+> - **FLUX.1-Kontext-pro (Document Agent)**: Extracts text, analyzes PDFs, understands document context
 >
 > **How They Work Together:**
-> 1. **GPT-4o** analyzes user requests and existing images using vision capabilities
-> 2. **FLUX.1-Kontext-pro** extracts context, text, and document information from images
-> 3. **FLUX.2-pro** generates artistic images based on analyzed context
-> 4. **GPT-4o** evaluates results and orchestrates multi-step workflows
-> 5. **Sora** creates videos when video output is requested
+> 1. **Orchestrator** (model-router) analyzes user requests and routes to the appropriate specialist
+> 2. **Cropping Agent** (GPT-4o) uses vision to identify and crop objects from images
+> 3. **Background Agent** (FLUX.2-pro) creates or replaces backgrounds with artistic precision
+> 4. **Thumbnail Agent** (DALL-E 3) generates compelling thumbnails for videos or images
+> 5. **Video Agent** (Sora) creates smooth, high-quality videos from text descriptions
+> 6. **Document Agent** (FLUX.1-Kontext-pro) processes PDFs and extracts structured information
 >
 > **Benefits of Specialized SME Models:**
 > - Each model excels at its specific domain (no overlap)
@@ -103,12 +107,13 @@ Each agent uses a specific model optimized for its task:
 graph TD
     User[User] <--> UI[Media Studio UI]
     UI <--> App[FastAPI Application]
-    App <--> Orchestrator[Main Orchestrator<br/>GPT-4o]
+    App <--> Orchestrator[Main Orchestrator<br/>Model Router]
     
-    Orchestrator <--> Crop[Cropping Agent]
-    Orchestrator <--> BG[Background Agent]
-    Orchestrator <--> Thumb[Thumbnail Generator]
-    Orchestrator <--> Video[Video Agent<br/>Image Sequences]
+    Orchestrator <--> Crop[Cropping Agent<br/>GPT-4o Vision]
+    Orchestrator <--> BG[Background Agent<br/>FLUX.2-pro]
+    Orchestrator <--> Thumb[Thumbnail Generator<br/>DALL-E 3]
+    Orchestrator <--> Video[Video Agent<br/>Sora]
+    Orchestrator <--> Doc[Document Agent<br/>FLUX.1-Kontext-pro]
     
     subgraph "Azure AI Foundry"
         Orchestrator
@@ -116,6 +121,7 @@ graph TD
         BG
         Thumb
         Video
+        Doc
     end
 ```
 
@@ -126,12 +132,12 @@ graph TD
 1. **Infrastructure Provisioning**:
    - Creates Resource Group, Azure AI Foundry, Key Vault, Storage Account, and Container Registry (ACR)
    - Deploys specialized AI Models:
-     - **GPT-4o** (Orchestration and main reasoning)
-     - **GPT-4o-mini** (Fast, efficient general tasks)
-     - **DALL-E-3** (Image generation)
-     - **FLUX.2-pro** (Advanced artistic images)
-     - **text-embedding-3-small** (Vector embeddings)
-     - **Video**: Image sequences via DALL-E-3/FLUX.2-pro (temporary until Sora-2 available)
+     - **GPT-4o** (Vision and cropping tasks)
+     - **GPT-4o-mini** (Lightweight routing tasks)
+     - **DALL-E 3** (Thumbnail generation)
+     - **FLUX.2-pro** (Background generation and manipulation)
+     - **FLUX.1-Kontext-pro** (Document processing and contextual understanding)
+     - **Sora** (Native video generation)
    - All models use **Managed Identity** for secure authentication (no API keys stored)
 
 2. **Automated Agent Creation**:
@@ -168,6 +174,7 @@ graph TD
    - **Thumbnail**: "Create a thumbnail with the text 'AMAZING'"
    - **Multi-Step**: "Crop the car, put it on a race track background, and add the text 'SPEED' in red"
    - **Video**: "Generate a 5-second video of a sunset over mountains"
+   - **Document**: "Extract all text from this PDF" or "Summarize this document"
 
 <!-- START BADGE -->
 <div align="center">

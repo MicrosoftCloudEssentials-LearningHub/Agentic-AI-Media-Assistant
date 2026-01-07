@@ -148,13 +148,6 @@ class ImageService:
         """
         Generate a video using image sequence stitching (DALL-E-3 or FLUX.2-pro).
         
-        TEMPORARY IMPLEMENTATION:
-        This method uses image sequences because:
-        1. Sora is not available in the current Azure subscription
-        2. Sora-2 is still in private preview as of January 2026
-        
-        TODO: Replace with direct Sora-2 API calls when it becomes available in Azure AI Foundry.
-        
         Args:
             prompt: Text description of the video
             duration: Video duration in seconds (default: 3.0)
@@ -188,6 +181,115 @@ class ImageService:
                 "message": f"Error generating video: {str(e)}",
                 "video_url": None
             }
+
+    def generate_video_with_sora(self, prompt: str, duration: float = 3.0) -> dict:
+        """
+        Generate a video using Sora native video generation.
+        
+        Args:
+            prompt: Text description of the video
+            duration: Video duration in seconds (default: 3.0, max: 6.0)
+            
+        Returns:
+            dict with 'success', 'video_url', 'metadata', and 'message'
+        """
+        try:
+            client = self._get_client_for_model(self.sora_model)
+            
+            if not client:
+                return {
+                    "success": False,
+                    "message": "Sora client not configured. Check AZURE_OPENAI_ENDPOINT_SORA and credentials.",
+                    "video_url": None
+                }
+            
+            # Generate video with Sora
+            logger.info(f"Generating video with Sora: {prompt[:100]}...")
+            
+            response = client.videos.generate(
+                model=self.sora_model,
+                prompt=prompt,
+                duration=min(duration, 6.0)  # Limit to 6 seconds
+            )
+            
+            if not response or not hasattr(response, 'data'):
+                return {
+                    "success": False,
+                    "message": "Sora returned empty response",
+                    "video_url": None
+                }
+            
+            # Get video URL from response
+            video_url = response.data[0].url if response.data else None
+            
+            if not video_url:
+                return {
+                    "success": False,
+                    "message": "Sora did not return a video URL",
+                    "video_url": None
+                }
+            
+            # Download and upload to blob storage for consistent access
+            blob_url = self._upload_video_from_url(video_url, prompt)
+            
+            return {
+                "success": True,
+                "video_url": blob_url or video_url,
+                "original_url": video_url,
+                "metadata": {
+                    "model": "sora",
+                    "duration": duration,
+                    "method": "native_video_generation",
+                    "prompt": prompt
+                },
+                "message": "Video generated successfully with Sora"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating video with Sora: {e}", exc_info=True)
+            return {
+                "success": False,
+                "message": f"Error generating video with Sora: {str(e)}",
+                "video_url": None
+            }
+
+    def _upload_video_from_url(self, video_url: str, prompt: str) -> str:
+        """Download video from URL and upload to blob storage."""
+        try:
+            if not self.blob_service_client:
+                return None
+            
+            # Download video
+            response = requests.get(video_url, timeout=30)
+            response.raise_for_status()
+            
+            # Generate blob name
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            safe_prompt = "".join(c for c in prompt[:30] if c.isalnum() or c in (' ', '-', '_')).strip().replace(' ', '_')
+            blob_name = f"sora_{safe_prompt}_{timestamp}.mp4"
+            
+            # Upload to blob storage
+            blob_client = self.blob_service_client.get_blob_client(
+                container=self.container_name,
+                blob=blob_name
+            )
+            
+            blob_client.upload_blob(response.content, overwrite=True)
+            
+            # Generate SAS URL
+            sas_token = generate_blob_sas(
+                account_name=self.storage_account,
+                container_name=self.container_name,
+                blob_name=blob_name,
+                permission=BlobSasPermissions(read=True),
+                expiry=datetime.utcnow() + timedelta(days=7)
+            )
+            
+            return f"{blob_client.url}?{sas_token}"
+            
+        except Exception as e:
+            logger.error(f"Error uploading video to blob storage: {e}")
+            return None
 
     def _get_client_for_model(self, model: str):
         endpoint = self.model_endpoints.get(model) or self.endpoint

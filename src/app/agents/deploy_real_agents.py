@@ -22,6 +22,18 @@ print(f"DEBUG: AZURE_LOCATION={os.getenv('AZURE_LOCATION')}")
 def _hash_instructions(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
+def _resolve_model_name(model: str) -> str:
+    """
+    Resolve model name for Azure AI Projects.
+    Maps 'model-router' to actual deployment name.
+    """
+    # Model router maps to gpt-4o for now (can be made more sophisticated)
+    if model == "model-router":
+        # Use gpt-4o as the primary model for routing
+        # In the future, this could be dynamic based on availability
+        return "gpt-4o"
+    return model
+
 def deploy_agents():
     """Deploy or update agents idempotently, emitting structured JSON for Terraform."""
 
@@ -54,14 +66,16 @@ def deploy_agents():
             "name": "Zava Media Orchestrator",
             "env_var": "orchestrator",
             "instructions": (
-                "You are the Zava Media Orchestrator. Your job is to analyze user requests related to image and video processing and route them to the appropriate specialist agent. "
+                "You are the Zava Media Orchestrator. Your job is to analyze user requests related to image, video, and document processing and route them to the appropriate specialist agent. "
                 "- If the user wants to crop an image or object, delegate to the 'cropping_agent'. "
                 "- If the user wants to change the background, delegate to the 'background_agent'. "
                 "- If the user wants to create a new thumbnail or image, delegate to the 'thumbnail_generator'. "
                 "- If the user wants to create a video, delegate to the 'video_agent'. "
+                "- If the user wants to process, extract, or analyze documents/PDFs, delegate to the 'document_agent'. "
                 "- For general questions, answer them yourself."
             ),
-            "model": "gpt-4o"  # Primary orchestration using GPT-4o
+            "model": "model-router",  # Use model router for orchestrator (dynamically selects best LLM)
+            "use_router": True
         },
         {
             "name": "Cropping Specialist",
@@ -79,7 +93,7 @@ def deploy_agents():
                 "You are the Background Specialist. Your task is to remove or replace backgrounds in images. "
                 "You can create new backgrounds based on text descriptions using advanced AI capabilities."
             ),
-            "model": "FLUX.2-pro"  # FLUX.2-pro for background generation
+            "model": "FLUX.2-pro"  # FLUX.2-pro as the agent's LLM - specialized in image generation/manipulation
         },
         {
             "name": "Thumbnail Generator",
@@ -88,7 +102,7 @@ def deploy_agents():
                 "You are the Thumbnail Generator. Your task is to create eye-catching video thumbnails. "
                 "You combine images, text, and effects to maximize click-through rates using advanced design strategies."
             ),
-            "model": "dall-e-3"  # DALL-E 3 for thumbnail creation
+            "model": "dall-e-3"  # DALL-E 3 as the agent's LLM - specialized in image creation
         },
         {
             "name": "Video Agent",
@@ -96,9 +110,19 @@ def deploy_agents():
             "instructions": (
                 "You are the Video Agent. Your task is to create and process video content. "
                 "You can analyze videos, provide editing recommendations, and suggest video enhancements. "
-                "Note: Advanced video generation capabilities are currently limited."
+                "You can generate videos using Sora for native video generation or image-sequence methods."
             ),
-            "model": "gpt-4o"  # Using GPT-4o (sora-2 not yet available)
+            "model": "sora"  # Sora as the agent's LLM - specialized in video generation and understanding
+        },
+        {
+            "name": "Document Processor",
+            "env_var": "document_agent",
+            "instructions": (
+                "You are the Document Processor. Your task is to analyze, extract, and generate content from documents including PDFs, images with text, and structured documents. "
+                "You can extract text, understand layout, generate document summaries, and create visual representations of document content. "
+                "You excel at contextual understanding of documents and can help with document-to-image conversion, text extraction, and document enhancement."
+            ),
+            "model": "FLUX.1-Kontext-pro"  # FLUX.1-Kontext-pro as the agent's LLM - specialized in contextual understanding and document processing
         }
     ]
     # --- Model Deployment Note ---
@@ -232,7 +256,7 @@ def deploy_agents():
                         except Exception:
                             pass
                         new_agent = project_client.agents.create_agent(
-                            model=cfg["model"], 
+                            model=_resolve_model_name(cfg["model"]), 
                             name=name, 
                             instructions=instr
                         )
@@ -253,7 +277,7 @@ def deploy_agents():
         print(f"[{env_var}] Creating new agent: {name}")
         try:
             agent = project_client.agents.create_agent(
-                model=cfg["model"], 
+                model=_resolve_model_name(cfg["model"]), 
                 name=name, 
                 instructions=instr
             )

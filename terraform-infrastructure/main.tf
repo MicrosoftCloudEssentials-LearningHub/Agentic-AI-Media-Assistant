@@ -600,7 +600,7 @@ resource "azurerm_linux_web_app" "app" {
     AZURE_OPENAI_API_KEY_FLUX                    = "MANAGED_IDENTITY"
     AZURE_OPENAI_ENDPOINT_GPT_IMAGE              = local.model_endpoints["gpt-4o"]
     AZURE_OPENAI_API_KEY_GPT_IMAGE               = "MANAGED_IDENTITY"
-    AZURE_OPENAI_ENDPOINT_SORA                   = ""  # Sora-2 not available yet
+    AZURE_OPENAI_ENDPOINT_SORA                   = local.model_endpoints["sora"]
     AZURE_OPENAI_API_KEY_SORA                    = "MANAGED_IDENTITY"
 
     # Storage Connection String via Key Vault

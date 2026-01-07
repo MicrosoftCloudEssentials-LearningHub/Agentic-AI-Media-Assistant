@@ -15,30 +15,31 @@ def generate_video(
     duration: float = 3.0,
     fps: int = 8,
     model: Literal["dall-e-3", "FLUX.2-pro"] = "dall-e-3",
-    style: str = "photorealistic"
+    style: str = "photorealistic",
+    method: Literal["both", "image-sequence", "sora"] = "both"
 ) -> dict:
     """
-    Generate a video from a text prompt using image sequence generation.
-    
-    NOTE: This is a temporary implementation using DALL-E-3 or FLUX.2-pro to generate
-    image sequences that are stitched together. When Sora-2 becomes available in Azure,
-    this will be replaced with native video generation for superior quality.
+    Generate a video from a text prompt using image sequences and/or Sora.
     
     Args:
         prompt: Text description of the video to generate
         duration: Video duration in seconds (default: 3.0, range: 1-6)
         fps: Frames per second (default: 8, recommended: 8-12 for image sequences)
-        model: Image generation model to use:
+        model: Image generation model to use for image-sequence method:
             - "dall-e-3": Photorealistic, high-quality images (recommended for realistic videos)
             - "FLUX.2-pro": Artistic, stylized images (recommended for creative/artistic videos)
         style: Visual style hint - "photorealistic", "artistic", "animated", "cinematic"
+        method: Video generation method:
+            - "both": Generate with both image-sequence and Sora for comparison (default)
+            - "image-sequence": Use DALL-E-3/FLUX.2-pro frame stitching only
+            - "sora": Use Sora native video generation only
     
     Returns:
         dict containing:
-            - success: Whether the video was generated successfully
-            - video_url: URL to the generated video (if successful)
-            - metadata: Video generation metadata (fps, frames, model, etc.)
-            - implementation_note: Explanation that this uses image sequences
+            - success: Whether the video(s) were generated successfully
+            - image_sequence_video: Result from image-sequence method (if method="both" or "image-sequence")
+            - sora_video: Result from Sora method (if method="both" or "sora")
+            - comparison_note: Explanation of differences between methods
             - message: Status or error message
     
     Example:
@@ -52,11 +53,9 @@ def generate_video(
         >>> print(result["video_url"])
     
     Implementation Details:
-        - Videos are created by generating N frames (N = duration × fps)
-        - Each frame is generated with progressive prompts for consistency
-        - Frames are stitched together using OpenCV
-        - Final video is uploaded to Azure Blob Storage
-        - Current limitation: Image sequences don't provide smooth motion like Sora-2 will
+        - Image-sequence: Creates N frames (N = duration × fps) and stitches them
+        - Sora: Native video generation with smooth, realistic motion
+        - "both" method generates videos with both approaches for comparison
     """
     image_service = get_image_service()
     
@@ -64,14 +63,41 @@ def generate_video(
     duration = max(1.0, min(6.0, duration))  # Limit to 1-6 seconds
     fps = max(4, min(12, fps))  # Limit to 4-12 fps for image sequences
     
-    # Generate the video
-    result = image_service.generate_video(
-        prompt=prompt,
-        duration=duration,
-        fps=fps,
-        model=model,
-        style=style
-    )
+    result = {"success": False, "message": ""}
+    
+    # Generate with image-sequence method
+    if method in ["both", "image-sequence"]:
+        image_seq_result = image_service.generate_video(
+            prompt=prompt,
+            duration=duration,
+            fps=fps,
+            model=model,
+            style=style
+        )
+        result["image_sequence_video"] = image_seq_result
+        result["success"] = image_seq_result.get("success", False)
+    
+    # Generate with Sora method
+    if method in ["both", "sora"]:
+        sora_result = image_service.generate_video_with_sora(
+            prompt=prompt,
+            duration=duration
+        )
+        result["sora_video"] = sora_result
+        result["success"] = result.get("success", False) or sora_result.get("success", False)
+    
+    # Add comparison note when both methods are used
+    if method == "both":
+        result["comparison_note"] = {
+            "image_sequence": "Created by stitching DALL-E-3/FLUX.2-pro image frames - may show slight jumps between frames",
+            "sora": "Native video generation with smooth, realistic motion - higher quality and more natural movement",
+            "recommendation": "Compare both to see the quality difference. Sora typically produces superior results for video content."
+        }
+        result["message"] = "Generated videos with both methods for comparison"
+    elif method == "image-sequence":
+        result["message"] = result.get("image_sequence_video", {}).get("message", "")
+    else:
+        result["message"] = result.get("sora_video", {}).get("message", "")
     
     return result
 
@@ -98,11 +124,11 @@ def check_video_generation_status() -> dict:
                 "recommended_for": "artistic/stylized videos",
                 "note": "Generates artistic image frames"
             },
-            "sora-2": {
-                "available": False,
+            "sora": {
+                "available": True,
                 "type": "native_video",
-                "status": "private_preview",
-                "note": "Not yet available in this subscription. Will replace image sequence generation when available."
+                "status": "deployed",
+                "note": "Native video generation with smooth, realistic motion. Superior quality compared to image sequences."
             }
         },
         "implementation": "image_sequence_stitching",
@@ -125,7 +151,7 @@ def check_video_generation_status() -> dict:
 # Tool metadata for agent frameworks
 TOOL_METADATA = {
     "name": "generate_video",
-    "description": "Generate a video from a text description using DALL-E-3 or FLUX.2-pro image sequences (temporary implementation until Sora-2 is available)",
+    "description": "Generate a video from a text description using Sora and/or image sequences. Can create both for comparison.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -154,6 +180,12 @@ TOOL_METADATA = {
                 "enum": ["photorealistic", "artistic", "animated", "cinematic"],
                 "description": "Visual style hint for the video",
                 "default": "photorealistic"
+            },
+            "method": {
+                "type": "string",
+                "enum": ["both", "image-sequence", "sora"],
+                "description": "Generation method: 'both' creates videos with both approaches for comparison, 'image-sequence' uses frame stitching, 'sora' uses native video generation",
+                "default": "both"
             }
         },
         "required": ["prompt"]
