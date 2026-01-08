@@ -60,32 +60,36 @@ Last updated: 2026-01-07
 > Each agent uses a specialized model as its "brain" optimized for its domain:
 
 **Sweden Central (4 models):**
+
 - **Model Router** (Orchestrator): Azure OpenAI Model Router (2025-11-18) - Intelligent routing across 18 models
 - **GPT-4o** (Cropping Agent): Vision and image understanding capabilities
 - **Sora** (Video Agent): Native video generation from text prompts
 - **FLUX.1-Kontext-pro** (Document Agent): Contextual understanding and PDF/document processing
 
 **East US (1 model):**
+
 - **FLUX.2-pro** (Visual Content Agent): Advanced artistic image generation, background manipulation, and thumbnail creation
 
 > [!NOTE]
 >`Multi-Model Multi-Region SME Collaboration`: This solution uses a **collaborative multi-agent approach across 2 Azure regions** where multiple AI models work together as Subject Matter Experts (SMEs): <br/>
 > **Sweden Central - Primary Hub (4 models, 4 agents):**
+>
 > - **Model Router (Orchestrator Agent)**: Azure OpenAI Model Router (2025-11-18) - Intelligently routes requests to optimal model among 18 options (GPT-4o, GPT-4o-mini, Claude, DeepSeek, Llama, Grok, etc.)
 > - **GPT-4o (Cropping Agent)**: Vision-based object detection and cropping coordination
 > - **Sora (Video Agent)**: Native video generation with smooth, realistic motion
 > - **FLUX.1-Kontext-pro (Document Agent)**: Extracts text, analyzes PDFs, understands document context
 >
 > **East US - Visual Content Hub (1 model, 1 agent):**
+>
 > - **FLUX.2-pro (Visual Content Specialist)**: Consolidated agent for backgrounds, thumbnails, and artistic image generation with low latency
 >
 > **How They Work Together?**
+>
 > 1. **Orchestrator** (Sweden - model-router) receives all requests and routes to appropriate specialist
 > 2. **Cropping Agent** (Sweden - GPT-4o) uses vision to identify and crop objects
 > 3. **Visual Content Specialist** (East US - FLUX.2-pro) handles backgrounds and thumbnails with co-located model for fast generation
 > 4. **Video Agent** (Sweden - Sora) creates smooth, high-quality videos from text descriptions
 > 5. **Document Agent** (Sweden - FLUX.1-Kontext-pro) processes PDFs and extracts structured information
-
 
 **Benefits of Multi-Region Architecture:**
 
@@ -94,7 +98,6 @@ Last updated: 2026-01-07
 > - **Geographic distribution**: Primary processing in Sweden Central, intensive image generation in East US
 > - **Intelligent routing**: Model Router automatically selects best model for each request
 > - **Consolidated workflows**: Visual Content Specialist handles multiple related tasks (backgrounds + thumbnails) efficiently
-
 
 > [!NOTE]
 > **Video Generation with Sora**: This solution uses **Sora** (version 2025-05-02) for native video generation in Azure AI Foundry.
@@ -134,6 +137,7 @@ graph TD
 ```
 
 **Multi-Region Agent Distribution:**
+
 - **Sweden Central**: Orchestrator, Cropping Specialist, Video Agent, Document Processor
 - **East US**: Visual Content Specialist (backgrounds + thumbnails)
 
