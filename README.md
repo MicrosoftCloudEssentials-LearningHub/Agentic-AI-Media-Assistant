@@ -26,8 +26,12 @@ Last updated: 2026-01-07
 > [!IMPORTANT]
 > Disclaimer: This repository contains a demo of `Zava Media AI Assistant`, a multi-agent system implementing Agent-to-Agent (A2A) protocol for automated media generation and manipulation. It features a fully automated `"Zero-Touch" deployment` pipeline orchestrated by Terraform, which `provisions infrastructure, creates specialized AI agents for image/video tasks in MSFT Foundry, and deploys the complete A2A application stack.` Feel free to modify this as needed, it's just a reference. Please refer [TechWorkshop L300: AI Apps and Agents](https://microsoft.github.io/TechWorkshop-L300-AI-Apps-and-agents/), and if needed contact Microsoft directly: [Microsoft Sales and Support](https://support.microsoft.com/contactus?ContactUsExperienceEntryPointAssetId=S.HP.SMC-HOME) for more guidance.
 
+> E.g
+
+<img width="1681" height="1062" alt="image" src="https://github.com/user-attachments/assets/e3a780f7-6a58-4675-ad0f-53c5d994e934" />
+
 > [!IMPORTANT]
-> The deployment process typically takes 15-20 minutes
+> The deployment process `typically takes 15-20 minutes`
 >
 > 1. Adjust [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) values 
 > 2. Initialize terraform with `terraform init`. Click here to [understand more about the deployment process](./terraform-infrastructure/README.md)
@@ -53,6 +57,8 @@ Last updated: 2026-01-07
 
 ## Specialized Models (5 Total)
 
+> Each agent uses a specialized model as its "brain" optimized for its domain:
+
 **Sweden Central (4 models):**
 - **Model Router** (Orchestrator): Azure OpenAI Model Router (2025-11-18) - Intelligent routing across 18 models
 - **GPT-4o** (Cropping Agent): Vision and image understanding capabilities
@@ -63,10 +69,7 @@ Last updated: 2026-01-07
 - **FLUX.2-pro** (Visual Content Agent): Advanced artistic image generation, background manipulation, and thumbnail creation
 
 > [!NOTE]
-> **Multi-Model Multi-Region SME Collaboration**
-> 
-> This solution uses a **collaborative multi-agent approach across 2 Azure regions** where multiple AI models work together as Subject Matter Experts (SMEs):
-> 
+>`Multi-Model Multi-Region SME Collaboration`: This solution uses a **collaborative multi-agent approach across 2 Azure regions** where multiple AI models work together as Subject Matter Experts (SMEs): <br/>
 > **Sweden Central - Primary Hub (4 models, 4 agents):**
 > - **Model Router (Orchestrator Agent)**: Azure OpenAI Model Router (2025-11-18) - Intelligently routes requests to optimal model among 18 options (GPT-4o, GPT-4o-mini, Claude, DeepSeek, Llama, Grok, etc.)
 > - **GPT-4o (Cropping Agent)**: Vision-based object detection and cropping coordination
@@ -76,25 +79,25 @@ Last updated: 2026-01-07
 > **East US - Visual Content Hub (1 model, 1 agent):**
 > - **FLUX.2-pro (Visual Content Specialist)**: Consolidated agent for backgrounds, thumbnails, and artistic image generation with low latency
 >
-> **How They Work Together:**
+> **How They Work Together?**
 > 1. **Orchestrator** (Sweden - model-router) receives all requests and routes to appropriate specialist
 > 2. **Cropping Agent** (Sweden - GPT-4o) uses vision to identify and crop objects
 > 3. **Visual Content Specialist** (East US - FLUX.2-pro) handles backgrounds and thumbnails with co-located model for fast generation
 > 4. **Video Agent** (Sweden - Sora) creates smooth, high-quality videos from text descriptions
 > 5. **Document Agent** (Sweden - FLUX.1-Kontext-pro) processes PDFs and extracts structured information
->
-> **Benefits of Multi-Region Architecture:**
+
+
+**Benefits of Multi-Region Architecture:**
+
 > - **Specialized models per domain**: Each model excels at its specific task (vision, generation, video, documents)
 > - **Optimized latency**: Visual content generation co-located with FLUX.2-pro in East US for fast image operations
 > - **Geographic distribution**: Primary processing in Sweden Central, intensive image generation in East US
 > - **Intelligent routing**: Model Router automatically selects best model for each request
 > - **Consolidated workflows**: Visual Content Specialist handles multiple related tasks (backgrounds + thumbnails) efficiently
->
+
+
 > [!NOTE]
-> **Video Generation with Sora**
-> 
-> This solution uses **Sora** (version 2025-05-02) for native video generation in Azure AI Foundry.
-> 
+> **Video Generation with Sora**: This solution uses **Sora** (version 2025-05-02) for native video generation in Azure AI Foundry.
 > **Sora Deployment**: The model is automatically deployed during `terraform apply`.
 
 > [!WARNING]
@@ -193,7 +196,7 @@ graph TD
 
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-36-limegreen" alt="Total views">
+  <img src="https://img.shields.io/badge/Total%20views-1316-limegreen" alt="Total views">
   <p>Refresh Date: 2026-01-07</p>
 </div>
 <!-- END BADGE -->
