@@ -22,18 +22,39 @@ print(f"DEBUG: AZURE_LOCATION={os.getenv('AZURE_LOCATION')}")
 def _hash_instructions(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
+def _resolve_model_name(model: str) -> str:
+    """
+    Resolve model name for Azure AI Projects.
+    The 'model-router' uses the actual Azure OpenAI Model Router (2025-11-18) which
+    intelligently routes requests across 18 models including GPT-4o, GPT-4o-mini,
+    Claude, DeepSeek, Llama, and Grok based on prompt characteristics.
+    
+    Azure AI Agents API converts hyphens to underscores in model names.
+    """
+    # Azure AI Agents API converts hyphen to underscore
+    return model.replace("-", "_")
+
 def deploy_agents():
     """Deploy or update agents idempotently, emitting structured JSON for Terraform."""
 
     project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT") or os.getenv("AZURE_AI_FOUNDRY_ENDPOINT")
+    deploy_region = os.getenv("DEPLOY_REGION", "swedencentral").lower()
+    
+    # Load dynamic configuration from environment variables (set by Terraform)
+    agent_region_map = json.loads(os.getenv("AGENT_REGION_MAP", "{}"))
+    agent_model_map = json.loads(os.getenv("AGENT_MODEL_MAP", "{}"))
+    
     if not project_endpoint:
         # Use the actual deployed endpoint from terraform
         project_endpoint = "https://aif-eastus2-5d360b17.cognitiveservices.azure.com/"
 
     print("=" * 70)
-    print("Idempotent Multi-Agent Provisioning - Azure AI Foundry")
+    print(f"Idempotent Multi-Agent Provisioning - Azure AI Foundry ({deploy_region})")
     print("=" * 70)
     print(f"Project Endpoint: {project_endpoint}")
+    print(f"Deploy Region: {deploy_region}")
+    print(f"Agent-Region Map: {agent_region_map}")
+    print(f"Agent-Model Map: {agent_model_map}")
     print()
 
     # Try to construct connection string if available
@@ -48,20 +69,43 @@ def deploy_agents():
             project_connection_string = f"{location}.api.azureml.ms;subscription_id={sub_id};resource_group={rg};project_name={project_name}"
             print(f"Constructed connection string: {project_connection_string}")
 
-    # Agent config definitions
+    # Use dynamic region_agents from Terraform variable or fallback to defaults
+    region_agents = agent_region_map if agent_region_map else {
+        "swedencentral": [
+            "orchestrator", "cropping_agent", "video_agent", "document_agent"
+        ],
+        "eastus": ["visual_content_agent"]  # Co-located with FLUX.2-pro for low-latency image generation
+    }
+    
+    # Get agents for this region
+    agents_to_deploy = region_agents.get(deploy_region, [])
+    
+    if not agents_to_deploy:
+        print(f"No agents configured for region: {deploy_region}")
+        return
+    
+    print(f"Deploying agents for {deploy_region}: {', '.join(agents_to_deploy)}")
+    print()
+
+    # Agent config definitions (all agents defined, filtered by region)
+    # Models are dynamically loaded from agent_model_map
     agents_config = [
         {
             "name": "Zava Media Orchestrator",
             "env_var": "orchestrator",
             "instructions": (
-                "You are the Zava Media Orchestrator. Your job is to analyze user requests related to image and video processing and route them to the appropriate specialist agent. "
+                "You are the Zava Media Orchestrator powered by Azure OpenAI Model Router. "
+                "Your job is to analyze user requests related to image, video, and document processing and route them to the appropriate specialist agent.\n\n"
+                "**ROUTING LOGIC:**\n"
                 "- If the user wants to crop an image or object, delegate to the 'cropping_agent'. "
-                "- If the user wants to change the background, delegate to the 'background_agent'. "
-                "- If the user wants to create a new thumbnail or image, delegate to the 'thumbnail_generator'. "
+                "- If the user wants to change backgrounds, create thumbnails, or generate images, delegate to the 'visual_content_agent'. "
                 "- If the user wants to create a video, delegate to the 'video_agent'. "
-                "- For general questions, answer them yourself."
+                "- If the user wants to process, extract, or analyze documents/PDFs, delegate to the 'document_agent'. "
+                "- For general questions, answer them yourself.\n\n"
+                "The Model Router automatically selects the optimal AI model (from 18 available models including GPT-4o, Claude, DeepSeek, Llama, Grok) based on your prompt characteristics."
             ),
-            "model": "gpt-4o"  # Upgraded to GPT-4o for better coordination
+            "model": agent_model_map.get("orchestrator", "model-router"),
+            "use_router": True
         },
         {
             "name": "Cropping Specialist",
@@ -70,37 +114,47 @@ def deploy_agents():
                 "You are the Cropping Specialist. Your task is to identify objects in images and provide cropping coordinates or cropped images. "
                 "You use advanced vision models to detect subjects and understand image content."
             ),
-            "model": "gpt-4o"  # Using GPT-4o for advanced image analysis
+            "model": agent_model_map.get("cropping_agent", "gpt-4o")
         },
         {
-            "name": "Background Specialist",
-            "env_var": "background_agent",
+            "name": "Visual Content Specialist",
+            "env_var": "visual_content_agent",
             "instructions": (
-                "You are the Background Specialist. Your task is to remove or replace backgrounds in images. "
-                "You can create new backgrounds based on text descriptions using advanced AI capabilities."
+                "You are the Visual Content Specialist. Your task is to handle all visual content creation including:\n"
+                "1. **Background Management** - Remove or replace backgrounds in images, create new backgrounds based on descriptions\n"
+                "2. **Thumbnail Generation** - Create eye-catching video thumbnails that maximize engagement\n"
+                "3. **Image Creation** - Generate high-quality images from text descriptions\n\n"
+                "You use FLUX.2-pro for advanced image generation. "
+                "Combine creative vision with technical execution to deliver professional visual content."
             ),
-            "model": "gpt-4o"  # Using GPT-4o for sophisticated background processing
-        },
-        {
-            "name": "Thumbnail Generator",
-            "env_var": "thumbnail_generator",
-            "instructions": (
-                "You are the Thumbnail Generator. Your task is to create eye-catching video thumbnails. "
-                "You combine images, text, and effects to maximize click-through rates using advanced design strategies."
-            ),
-            "model": "gpt-4o"  # Using GPT-4o for intelligent thumbnail design
+            "model": agent_model_map.get("visual_content_agent", "FLUX.2-pro")  # Deployed in East US with FLUX.2-pro
         },
         {
             "name": "Video Agent",
             "env_var": "video_agent",
             "instructions": (
                 "You are the Video Agent. Your task is to create and process video content. "
-                "You can analyze videos, provide editing recommendations, and suggest video enhancements."
+                "You can analyze videos, provide editing recommendations, and suggest video enhancements. "
+                "You can generate videos using Sora for native video generation or image-sequence methods."
             ),
-            "model": "gpt-4o"  # Using GPT-4o for advanced video processing capabilities
+            "model": agent_model_map.get("video_agent", "sora")
+        },
+        {
+            "name": "Document Processor",
+            "env_var": "document_agent",
+            "instructions": (
+                "You are the Document Processor. Your task is to analyze, extract, and generate content from documents including PDFs, images with text, and structured documents. "
+                "You can extract text, understand layout, generate document summaries, and create visual representations of document content. "
+                "You excel at contextual understanding of documents and can help with document-to-image conversion, text extraction, and document enhancement."
+            ),
+            "model": agent_model_map.get("document_agent", "FLUX.1-Kontext-pro")
         }
     ]
-
+    # --- Dynamic Model Assignment ---
+    # Models are loaded from the agent_model_map environment variable (set by Terraform).
+    # This allows easy reconfiguration via terraform.tfvars without code changes.
+    # Defaults are provided as fallbacks if the map is not available.
+    # ---
     # Load prior state (instruction hashes) if present
     # Write to terraform temp directory instead of src/app/agents
     terraform_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "terraform-infrastructure")
@@ -120,8 +174,24 @@ def deploy_agents():
     try:
         print("Initializing Azure AI Project Client...")
         
-        # Use DefaultAzureCredential for authentication
-        credential = DefaultAzureCredential()
+        # Use DefaultAzureCredential with correct scope for Azure AI
+        # The Azure AI Foundry API requires tokens scoped to https://ai.azure.com
+        from azure.core.credentials import AccessToken
+        from datetime import datetime
+        
+        base_credential = DefaultAzureCredential()
+        
+        # Create a wrapper credential that requests tokens with the correct audience
+        class AzureAIScopedCredential:
+            """Wrapper credential that requests tokens with the correct Azure AI audience."""
+            def __init__(self, credential):
+                self._credential = credential
+            
+            def get_token(self, *scopes, **kwargs):
+                # Request token with Azure AI audience
+                return self._credential.get_token("https://ai.azure.com/.default", **kwargs)
+        
+        credential = AzureAIScopedCredential(base_credential)
         
         # Get required environment variables
         sub_id = os.getenv("AZURE_SUBSCRIPTION_ID")
@@ -174,6 +244,12 @@ def deploy_agents():
     for cfg in agents_config:
         name = cfg["name"]
         env_var = cfg["env_var"]
+        
+        # Skip agents not configured for this region
+        if env_var not in agents_to_deploy:
+            print(f"[{env_var}] Skipping - not configured for {deploy_region}")
+            continue
+        
         instr = cfg["instructions"]
         instr_hash = _hash_instructions(instr)
         prior_hash = prior_state.get(env_var, {}).get("hash")
@@ -208,7 +284,7 @@ def deploy_agents():
                         except Exception:
                             pass
                         new_agent = project_client.agents.create_agent(
-                            model=cfg["model"], 
+                            model=_resolve_model_name(cfg["model"]), 
                             name=name, 
                             instructions=instr
                         )
@@ -229,7 +305,7 @@ def deploy_agents():
         print(f"[{env_var}] Creating new agent: {name}")
         try:
             agent = project_client.agents.create_agent(
-                model=cfg["model"], 
+                model=_resolve_model_name(cfg["model"]), 
                 name=name, 
                 instructions=instr
             )

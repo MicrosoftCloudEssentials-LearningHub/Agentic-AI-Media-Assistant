@@ -1,16 +1,6 @@
-output "cosmosDbEndpoint" {
-  value       = azurerm_cosmosdb_account.cosmos.endpoint
-  description = "Cosmos DB account endpoint"
-}
-
 output "storageAccountName" {
   value       = azapi_resource.storage.name
   description = "Storage account name"
-}
-
-output "searchServiceName" {
-  value       = azurerm_search_service.search.name
-  description = "Azure AI Search service name"
 }
 
 output "container_registry_name" {
@@ -58,6 +48,27 @@ output "resource_group_name" {
   description = "Resource group name"
 }
 
+output "agent_region_assignments" {
+  description = "Agent-to-region mapping configuration"
+  value       = var.agent_region_assignments
+}
+
+output "agent_model_assignments" {
+  description = "Agent-to-model mapping configuration"
+  value       = var.agent_model_assignments
+}
+
+output "model_regions" {
+  description = "Model-to-region deployment mapping"
+  value       = local.model_regions_final
+}
+
+output "model_specs" {
+  description = "Model specifications and versions"
+  value       = var.model_specs
+  sensitive   = false
+}
+
 output "subscription_id" {
   value       = data.azurerm_client_config.current.subscription_id
   description = "Azure subscription ID"
@@ -69,31 +80,41 @@ output "application_insights_connection_string" {
   sensitive   = true
 }
 
-output "cosmos_db_name" {
-  value       = local.cosmos_db_name
-  description = "Cosmos DB database name"
-}
-
 output "ai_foundry_primary_endpoint" {
   value       = local.foundry_endpoints[local.primary_foundry_region]
   description = "Primary MSFT Foundry endpoint URL (chat region)"
 }
 
-# Real agent IDs & statuses (external data source from agents_state.json)
+output "ai_project_primary_endpoint" {
+  value       = local.ai_project_endpoints[local.primary_foundry_region]
+  description = "Primary AI Project endpoint URL for agents API"
+}
+
+# Agent secret names (backup approach for zero-touch deployment)
 output "agent_ids" {
-  value = {
-    for k, v in data.external.agents_state.result :
-    k => v if length(regexall("_id$", k)) > 0
-  }
-  description = "Map of agent environment variable names to their resolved IDs"
+  value = var.enable_ai_automation ? {
+    for k, v in {
+      agent_orchestrator_id        = azurerm_key_vault_secret.agent_orchestrator_id.name
+      agent_cropping_agent_id      = azurerm_key_vault_secret.agent_cropping_agent_id.name
+      agent_background_agent_id    = azurerm_key_vault_secret.agent_background_agent_id.name
+      agent_thumbnail_generator_id = azurerm_key_vault_secret.agent_thumbnail_generator_id.name
+      agent_video_agent_id         = azurerm_key_vault_secret.agent_video_agent_id.name
+    } : k => v
+  } : {}
+  description = "Map of agent secret names for backup agent configuration"
 }
 
 output "agent_statuses" {
-  value = {
-    for k, v in data.external.agents_state.result :
-    k => v if length(regexall("_status$", k)) > 0
-  }
-  description = "Map of agent environment variable names to provisioning statuses (created/existing/updated/etc.)"
+  value = var.enable_ai_automation ? {
+    for agent_name in [
+      "agent_orchestrator_id",
+      "agent_cropping_agent_id",
+      "agent_background_agent_id",
+      "agent_thumbnail_generator_id",
+      "agent_video_agent_id"
+    ] : agent_name => "backup"
+  } : {}
+  description = "Status of agent secrets (backup mode for zero-touch deployment)"
 }
 
 output "key_vault_name" {
@@ -130,11 +151,8 @@ output "key_vault_uri" {
 # }
 
 output "deployed_models" {
-  value = var.enable_ai_automation ? [
-    "gpt-4o-mini",
-    "text-embedding-3-small"
-  ] : []
-  description = "List of AI models actually deployed (phi-4 not available in this region)"
+  value       = var.enable_ai_automation ? keys(local.ai_model_specs) : []
+  description = "List of AI models deployed across all regions"
 }
 
 output "env_file_location" {
@@ -191,16 +209,11 @@ output "application_instructions" {
     (Automation starts with the app container; no manual scripts required)
 
   TEST PROMPTS:
-    - "What colors of paint do you have available?"
-    - "Tell me about lattices"
-    - "Where can I find your store?"
-    - "Do you have history books?" (tests scope limits)
+    ${var.enable_ai_automation ? "- Test the deployed AI agents with sample queries" : "- AI automation disabled - configure agents manually"}
 
   AZURE RESOURCES:
     - Resource Group: ${azurerm_resource_group.rg.name}
     - AI Foundry (primary): ${local.foundry_names[local.primary_foundry_region]}
-    - Cosmos DB: ${local.cosmos_account_name}
-    - Search Service: ${local.search_service_name}
     - Container Registry: ${local.registry_name}
 
   ============================================================================
@@ -266,9 +279,7 @@ output "deployment_summary" {
         health  = "https://${azurerm_linux_web_app.app.default_hostname}/a2a/automation/health"
       } : null
     }
-    data_services = {
-      cosmos_endpoint = azurerm_cosmosdb_account.cosmos.endpoint
-      search_endpoint = "https://${azurerm_search_service.search.name}.search.windows.net"
+    storage = {
       storage_account = local.storage_account
     }
   }

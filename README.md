@@ -1,11 +1,9 @@
 # Demo: Zava Media AI Assistant <br/> Multi-Agent Architecture <br/> for Image & Video Processing - Overview 
 
-Costa Rica
-
 [![GitHub](https://img.shields.io/badge/--181717?logo=github&logoColor=ffffff)](https://github.com/)
 [brown9804](https://github.com/brown9804)
 
-Last updated: 2025-12-10
+Last updated: 2026-01-08
 
 ----------
 
@@ -13,6 +11,10 @@ Last updated: 2025-12-10
 <summary><b>List of References</b> (Click to expand)</summary>
 
 - [Foundry Models sold directly by Azure](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/concepts/models-sold-directly-by-azure?view=foundry-classic&pivots=azure-openai&tabs=global-standard-aoai%2Cstandard-chat-completions%2Cglobal-standard#azure-openai-in-microsoft-foundry-models) - models available 
+- [Timelines for Foundry Models](https://learn.microsoft.com/en-us/azure/ai-foundry/concepts/model-lifecycle-retirement?view=foundry-classic#timelines-for-foundry-models) - retirement dates
+- [Azure OpenAI in Microsoft Foundry model deprecations and retirements](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/model-retirements?view=foundry-classic&tabs=text#current-models) - deprecation Date
+- [Use model router for Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/model-router?view=foundry-classic) - model-router LLMs
+- [Model summary table and region availability](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/concepts/models-sold-directly-by-azure?view=foundry-classic&pivots=azure-openai&tabs=global-standard-aoai%2Cstandard-chat-completions%2Cglobal-standard#model-summary-table-and-region-availability) - table summary
 - [Baseline architecture for an Azure Kubernetes Service (AKS) cluster](https://learn.microsoft.com/en-us/azure/architecture/reference-architectures/containers/aks/baseline-aks)
 - [Run your functions from a package file in Azure](https://learn.microsoft.com/en-us/azure/azure-functions/run-functions-from-deployment-package)
 - [What is Microsoft Translator Pro?](https://learn.microsoft.com/en-us/azure/ai-services/translator/solutions/translator-pro/overview)
@@ -20,18 +22,20 @@ Last updated: 2025-12-10
 - [AI Leaderboards](https://llm-stats.com/) - general ref
 - [How to Stream Agent Responses](https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-streaming?utm_source=copilot.com&pivots=programming-language-python)
 - [How to enable Live Streaming over Direct Line for a Copilot Studio - deployed agent?](https://github.com/Microsoft/BotFramework-WebChat/issues/5628?utm_source=copilot.com)
+- [Azure OpenAI Responses API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/responses?view=foundry-classic&tabs=python-key)
+- [Foundry Control Plane: Managing AI agents at scale | BRK202](https://www.youtube.com/watch?v=XjVj_qRwzVg)
 
 </details>
 
 > [!IMPORTANT]
-> Disclaimer: This repository contains a demo of `Zava Media AI Assistant`, a multi-agent system implementing Agent-to-Agent (A2A) protocol for automated media generation and manipulation. It features a fully automated `"Zero-Touch" deployment` pipeline orchestrated by Terraform, which `provisions infrastructure, creates specialized AI agents for image/video tasks in MSFT Foundry, and deploys the complete A2A application stack.` Feel free to modify this as needed, it's just a reference. Please refer [TechWorkshop L300: AI Apps and Agents](https://microsoft.github.io/TechWorkshop-L300-AI-Apps-and-agents/), and if needed contact Microsoft directly: [Microsoft Sales and Support](https://support.microsoft.com/contactus?ContactUsExperienceEntryPointAssetId=S.HP.SMC-HOME) for more guidance. There are tons of free resources out there, all eager to support!
+> Disclaimer: This repository contains a demo of `Zava Media AI Assistant`, a multi-agent system implementing Agent-to-Agent (A2A) protocol for automated media generation and manipulation. It features a fully automated `"Zero-Touch" deployment` pipeline orchestrated by Terraform, which `provisions infrastructure, creates specialized AI agents for image/video tasks in MSFT Foundry, and deploys the complete A2A application stack.` Feel free to modify this as needed, it's just a reference. Please refer [TechWorkshop L300: AI Apps and Agents](https://microsoft.github.io/TechWorkshop-L300-AI-Apps-and-agents/), and if needed contact Microsoft directly: [Microsoft Sales and Support](https://support.microsoft.com/contactus?ContactUsExperienceEntryPointAssetId=S.HP.SMC-HOME) for more guidance.
 
-> E.g 
+> E.g
 
-<img width="1585" height="972" alt="image" src="https://github.com/user-attachments/assets/900004c3-a0fd-4c20-bdff-464b03fe30ea" />
+<img width="1681" height="1062" alt="image" src="https://github.com/user-attachments/assets/e3a780f7-6a58-4675-ad0f-53c5d994e934" />
 
 > [!IMPORTANT]
-> The deployment process typically takes 15-20 minutes
+> The deployment process `typically takes 15-20 minutes`
 >
 > 1. Adjust [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) values 
 > 2. Initialize terraform with `terraform init`. Click here to [understand more about the deployment process](./terraform-infrastructure/README.md)
@@ -39,47 +43,79 @@ Last updated: 2025-12-10
 
 ## Key Features
 
-- **Media-Centric A2A Protocol**: Agent-to-Agent communication for complex image and video processing workflows
-- **5-Agent Architecture**: Specialized AI agents with proper delegation through A2A protocol:
-  - **Main Orchestrator**: Central request router that analyzes user requests, understands intent, and intelligently delegates tasks to specialized agents
-  - **Image Cropping Specialist**: Smart object detection and cropping capabilities  
-  - **Background Modification Agent**: Specialized in background removal, replacement, and scene adaptation
-  - **Thumbnail Generation Agent**: Composes final assets with text overlays and layout optimization
-  - **Video Processing Agent**: Specialized video analysis and frame extraction for video thumbnail generation
+> [!WARNING]
+> **Multi-Region Deployment**: Sweden Central hosts 4 models, East US hosts 1 model. All models use **GlobalStandard** SKU for optimal performance and availability.
+
+> For example East US \& Sweden Central:
+
+| East US | Sweden Central | 
+| --- | ---- | 
+| <img width="1891" height="417" alt="image" src="https://github.com/user-attachments/assets/edee7ca9-5148-4ee0-b461-1b8960550226" /> | <img width="1892" height="478" alt="image" src="https://github.com/user-attachments/assets/92d00545-757a-462a-8bba-a42a1cbc5eff" /> | 
+
+- **Media-Centric AI Processing**: Specialized agents for image, video, and document manipulation workflows
+- **Multi-Region Architecture**: 2 Azure AI Foundry projects across 2 regions for optimal performance:
+  - **Sweden Central** (Primary): 4 agents + 4 models (orchestration, cropping, video, documents)
+  - **East US** (Secondary): 1 agent + 1 model (visual content generation with low latency)
+- **5-Agent Architecture**: Specialized AI agents with intelligent task delegation:
+  - **Main Orchestrator** (Sweden): Central request router (`model-router`) with 18-model intelligent routing
+  - **Cropping Specialist** (Sweden): Smart object detection and cropping (`GPT-4o vision`)
+  - **Visual Content Specialist** (East US): Background removal/replacement + thumbnail generation (`FLUX.2-pro`)
+  - **Video Processing Agent** (Sweden): Native video generation with `Sora`
+  - **Document Processor** (Sweden): PDF/document analysis and extraction (`FLUX.1-Kontext-pro`)
 - **Real-Time Image Processing**: Upload or paste images directly into the chat for immediate agent action
-- **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents with proper delegation patterns
-- **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle including enhanced A2A framework deployment
-- **A2A Task Coordination**: Advanced inter-agent task delegation (e.g., "Crop this, then change background, then add text")
+- **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents across multiple projects
+- **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle
+- **Advanced Task Coordination**: Inter-agent task delegation (e.g., "Crop this, then change background, then add text")
+- **Dynamic Configuration**: All settings managed via [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) - `no code changes needed, just add your values here`
 
-## About A2A Protocol
+## Specialized Agents (SMEs) (5 Total)
 
-`A2A (Agent-to-Agent) Protocol is a standardized communication framework that enables multiple AI agents to collaborate and coordinate tasks seamlessly.`
+> Each agent uses a specialized model as its "brain" optimized for its domain:
 
-> What is A2A Protocol?
+**Sweden Central (4):**
 
-- **Agent-to-Agent Communication**: Structured messaging between multiple AI agents
-- **Task Coordination**: Agents can delegate tasks to specialized agents
-- **Event-Driven Architecture**: Real-time event handling for agent interactions
-- **Agent Discovery**: Automatic detection and registration of available agents
-- **Protocol Standardization**: Consistent API for inter-agent communication
+- **Model Router** (Orchestrator): Azure OpenAI Model Router (2025-11-18) ~ Intelligent routing across 18 models, `routes requests to optimal model among 18 options`. Click here to read more about it [Use model router for Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/model-router?view=foundry-classic)
+- **GPT-4o** (Cropping Agent): Vision and image understanding capabilities. ~ `Vision-based object detection and cropping coordination`
+- **Sora** (Video Agent): Native video generation from text prompts `with smooth, realistic motion`
+- **FLUX.1-Kontext-pro** (Document Agent): Contextual understanding and PDF/document processing. ~ `Extracts text, analyzes PDFs, understands document context`
 
-> A2A Components in This Project:
+    > For example:
+    
+    | Models | Agents | 
+    | --- | ---- | 
+    | <img width="1891" height="417" alt="image" src="" /> | <img width="1892" height="478" alt="image" src="" /> | 
 
-- **Agent Execution Framework**: Manages multiple agent instances (`src/a2a/server/agent_execution.py`)
-- **Event System**: Handles inter-agent communication and delegation (`src/a2a/server/events/`)
-- **Task Coordination**: Advanced task delegation between specialized agents (`src/a2a/server/tasks.py`)
-- **Request Handlers**: Processes agent-to-agent requests with delegation routing (`src/a2a/server/request_handlers.py`)
-- **Coordinator Agent**: Orchestrates complex multi-agent workflows (`src/a2a/agent/coordinator.py`)
-- **Specialized Agents**: Cropping, Background, and Thumbnail agents (`src/app/agents/thumbnail_agents.py`)
-- **API Endpoints**: RESTful and WebSocket APIs for enhanced agent communication (`src/a2a/api/`)
+**East US (1):**
 
-> A2A vs Traditional Multi-Agent Systems:
+- **FLUX.2-pro** (Visual Content Agent): Advanced artistic image generation, background manipulation, and thumbnail creation. ~ `Consolidated agent for backgrounds, thumbnails, and artistic image generation with low latency`
+    
+    > For example:
+    
+    | Models | Agents | 
+    | --- | ---- | 
+    | <img width="1891" height="417" alt="image" src="https://github.com/user-attachments/assets/edee7ca9-5148-4ee0-b461-1b8960550226" /> | <img width="1892" height="478" alt="image" src="https://github.com/user-attachments/assets/77cab91f-85da-4c57-846a-477efbd82f9c" /> | 
 
-- **Standardized Protocol**: Uses consistent message formats and APIs
-- **Scalable Architecture**: Easily add new agents without modifying existing ones
-- **Real-time Communication**: WebSocket support for instant agent interactions
-- **Event-Driven**: Asynchronous event handling for better performance
-- **Infrastructure Integration**: Full Terraform deployment with monitoring and automation
+> **How They Work Together?**
+>
+> 1. **Orchestrator** (Sweden - model-router) receives all requests and routes to appropriate specialist
+> 2. **Cropping Agent** (Sweden - GPT-4o) uses vision to identify and crop objects
+> 3. **Visual Content Specialist** (East US - FLUX.2-pro) handles backgrounds and thumbnails with co-located model for fast generation
+> 4. **Video Agent** (Sweden - Sora) creates smooth, high-quality videos from text descriptions
+> 5. **Document Agent** (Sweden - FLUX.1-Kontext-pro) processes PDFs and extracts structured information
+
+**Benefits of Multi-Region Architecture:**
+
+> - **Specialized models per domain**: Each model excels at its specific task (vision, generation, video, documents)
+> - **Optimized latency**: Visual content generation co-located with FLUX.2-pro in East US for fast image operations
+> - **Geographic distribution**: Primary processing in Sweden Central, intensive image generation in East US
+> - **Intelligent routing**: Model Router automatically selects best model for each request
+> - **Consolidated workflows**: Visual Content Specialist handles multiple related tasks (backgrounds + thumbnails) efficiently
+
+> [!WARNING]
+> **Azure Quota and Model Availability**
+> The models deployed (`model-router`, `GPT-4o`, `FLUX.2-pro`, `FLUX.1-Kontext-pro`, `Sora`) require GPU capacity and are subject to Azure quotas. **If you encounter deployment errors related to "Insufficient Quota"**, request a quota increase: [Azure Support](https://portal.azure.com/#blade/Microsoft_Azure_Support/HelpAndSupportBlade/newsupportrequest)
+
+
 
 ## Architecture
 
@@ -87,112 +123,90 @@ Last updated: 2025-12-10
 graph TD
     User[User] <--> UI[Media Studio UI]
     UI <--> App[FastAPI Application]
-    App <--> A2A[A2A Protocol Server]
-    A2A <--> Orchestrator[Main Orchestrator/Router]
-    Orchestrator <--> Crop[Cropping Agent]
-    Orchestrator <--> BG[Background Agent]
-    Orchestrator <--> Gen[Thumbnail Generator]
+    App <--> Orchestrator[Main Orchestrator<br/>Model Router<br/>Sweden Central]
     
-    subgraph "A2A Communication"
-        Orchestrator <--> Crop
-        Orchestrator <--> BG
-        Orchestrator <--> Gen
+    Orchestrator <--> Crop[Cropping Agent<br/>GPT-4o<br/>Sweden Central]
+    Orchestrator <--> Visual[Visual Content Specialist<br/>FLUX.2-pro<br/>East US]
+    Orchestrator <--> Video[Video Agent<br/>Sora<br/>Sweden Central]
+    Orchestrator <--> Doc[Document Agent<br/>FLUX.1-Kontext-pro<br/>Sweden Central]
+    
+    subgraph "Sweden Central Project"
+        Orchestrator
+        Crop
+        Video
+        Doc
+    end
+    
+    subgraph "East US Project"
+        Visual
     end
 ```
+
+**Multi-Region Agent Distribution:**
+
+> - **Sweden Central**: Orchestrator, Cropping Specialist, Video Agent, Document Processor
+> - **East US**: Visual Content Specialist (backgrounds + thumbnails)
 
 ## What Happens Under the Hood?
 
 > When you run `terraform apply`, the following automated sequence occurs:
 
 1. **Infrastructure Provisioning**:
-   - Creates Resource Group, Cosmos DB, MSFT Foundry, AI Search, Storage Account, Key Vault, and Container Registry (ACR).
-   - Deploys AI Models (`gpt-4o-mini`, `text-embedding-3-small`) with AI Foundry Router as core orchestrator.
-   - Sets up A2A protocol infrastructure including event queues and monitoring.
+   - Creates Resource Group, 2 Azure AI Foundry projects (Sweden Central + East US), Key Vault, Storage Account, and Container Registry (ACR)
+   - **Multi-Region Model Deployment**:
+     - **Sweden Central (4 models)**:
+       - **Model Router** (Orchestrator - automatic model selection from 18+ options)
+       - **GPT-4o** (Vision and cropping tasks)
+       - **Sora** (Native video generation)
+       - **FLUX.1-Kontext-pro** (Document processing and contextual understanding)
+     - **East US (1 model)**:
+       - **FLUX.2-pro** (Background generation, thumbnail creation, artistic image manipulation)
+   - All models use **GlobalStandard** SKU for optimal performance
+   - All resources use **Managed Identity** for secure authentication (no API keys stored)
 
-      > E.g 
-  
-       <img width="1850" height="794" alt="image" src="https://github.com/user-attachments/assets/ed17ee51-f7fa-427f-a5d2-062ca3ab3c76" />
-
-2. **A2A Framework Deployment**:
-   - Initializes the Agent-to-Agent protocol server components.
-   - Sets up event queue system for inter-agent communication.
-   - Configures agent discovery and registration services.
-   - Deploys A2A monitoring and automation frameworks.
-
-3. **Data Pipeline Execution**:
-   - Sets up a Python virtual environment.
-   - Ingests `product_catalog.csv` into Cosmos DB with A2A event notifications.
-
-        > E.g 
-
-   
-   - Creates and populates an Azure AI Search index with vector embeddings through A2A coordination.
-
-        > E.g 
-        
-
-4. **Automated Agent Creation & A2A Registration**:
-   - **Fully automated by terraform**: No manual intervention required
-   - Installs the `azure-ai-projects` SDK and connects to MSFT Foundry
-   - Creates 5 specialized media processing agents:
-     - **Main Orchestrator**: Central request router and task coordinator
-     - **Image Cropping Specialist**: Smart object detection and cropping
-     - **Background Modification Agent**: Background removal and replacement
-     - **Thumbnail Generation Agent**: Final asset composition with text overlays
-     - **Video Processing Agent**: Video analysis and frame extraction
-   - Automatically stores agent IDs in Azure Key Vault for secure access
+2. **Automated Agent Creation**:
+   - **Fully automated by Terraform**: No manual intervention required
+   - Installs the `azure-ai-projects` SDK and connects to MSFT Foundry projects in both regions
+   - Creates specialized media processing agents with region-specific model assignments:
+     - **Sweden Central**: Orchestrator, Cropping Specialist, Video Agent, Document Processor
+     - **East US**: Visual Content Specialist
+   - Automatically stores agent IDs in Azure Key Vault for secure access with region prefixes
    - Web app retrieves agent configuration from Key Vault automatically
-   - **Zero manual configuration** - terraform handles all agent deployment and setup
+   - **Zero manual configuration** - Terraform handles all multi-region agent deployment and setup
 
-      > E.g 
-      
-
-5. **Application Deployment**:
-   - Builds the Docker container with A2A protocol support in the cloud (ACR Build).
-   - Configures the Azure Web App with the generated Agent IDs, A2A endpoints, and credentials.
-   - Deploys the container with A2A server components and restarts the app.
+3. **Application Deployment**:
+   - Builds the Docker container in the cloud (ACR Build)
+   - Configures the Azure Web App with the generated Agent IDs and Managed Identity
+   - Deploys the container and restarts the app
 
 ## Verification
 
 > After deployment completes, verify the system:
 
 1. **Check the Web App**:
-   - The Terraform output will provide the `application_url`.
-   - Visit `https://<your-app-name>.azurewebsites.net`.
-   - You should see the Zava chat interface with A2A protocol support.
+   - The Terraform output will provide the `application_url`
+   - Visit `https://<your-app-name>.azurewebsites.net`
+   - You should see the Zava Media AI interface
 
-      > E.g 
-      
+2. **Verify Agent Architecture**:
+   - Go to the [MSFT Foundry Portal](https://ai.azure.com)
+   - Check **Sweden Central Project** -> **Build** -> **Agents**:
+     - Should see: Orchestrator, Cropping Specialist, Video Agent, Document Processor (4 agents)
+   - Check **East US Project** -> **Build** -> **Agents**:
+     - Should see: Visual Content Specialist (1 agent)
+   - **Agent IDs are automatically stored in Azure Key Vault** with region prefixes and retrieved by the web app
 
-2. **Verify A2A Protocol Endpoints**:
-   - Check A2A Chat API: `https://<your-app-name>.azurewebsites.net/a2a/chat`
-   - Check A2A Server API: `https://<your-app-name>.azurewebsites.net/a2a/api/docs`
-   - Verify agent discovery: `https://<your-app-name>.azurewebsites.net/a2a/server/agents`
-
-3. **Verify Enhanced Agent Architecture**:
-   - Go to the [MSFT Foundry Portal](https://ai.azure.com).
-   - Navigate to your project -> **Build** -> **Agents**.
-   - You should see the 5 specialized media agents listed:
-     - Main Orchestrator - Request Router
-     - Image Cropping Specialist  
-     - Background Modification Agent
-     - Thumbnail Generation Agent
-     - Video Processing Agent
-   - **Agent IDs are automatically stored in Azure Key Vault** and retrieved by the web app
-
-      > E.g 
-      
-
-4. **Test Enhanced A2A Interactions**: For example:
-   - **General**: "Hi, I need a thumbnail for my video."
-   - **Cropping**: "Crop the person from this image."
-   - **Background**: "Change the background to a neon city."
-   - **Thumbnail**: "Create a thumbnail with the text 'EPIC WIN'."
-   - **Multi-Agent**: "Crop the car, put it on a race track background, and add the text 'SPEED' in red."
+3. **Test Media Processing**: For example:
+   - **Image Upload**: Upload an image and ask "Crop the main subject"
+   - **Background**: "Change the background to a beach scene" (routed to East US for fast generation)
+   - **Thumbnail**: "Create a thumbnail with the text 'AMAZING'" (routed to East US)
+   - **Multi-Step**: "Crop the car, put it on a race track background, and add the text 'SPEED' in red"
+   - **Video**: "Generate a 5-second video of a sunset over mountains" (Sweden Central - Sora)
+   - **Document**: "Extract all text from this PDF" or "Summarize this document" (Sweden Central - FLUX.1-Kontext-pro)
 
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-1696-limegreen" alt="Total views">
-  <p>Refresh Date: 2025-12-04</p>
+  <img src="https://img.shields.io/badge/Total%20views-1367-limegreen" alt="Total views">
+  <p>Refresh Date: 2026-01-08</p>
 </div>
 <!-- END BADGE -->

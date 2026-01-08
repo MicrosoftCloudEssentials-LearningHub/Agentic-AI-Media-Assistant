@@ -5,11 +5,13 @@ Costa Rica
 [![GitHub](https://img.shields.io/badge/--181717?logo=github&logoColor=ffffff)](https://github.com/)
 [brown9804](https://github.com/brown9804)
 
-Last updated: 2025-12-03
+Last updated: 2026-01-07
 
 ----------
 
 > This approach focuses on `setting up the required infrastructure via Terraform`. It allows for source control of not only the solution code, connections, and setups `but also the infrastructure itself`.
+
+`E.g if you have all LLMs in one single region`:
 
 <div align="center">
   <img src="https://github.com/user-attachments/assets/493cfe5e-6262-4e43-a0e1-21007d14c917" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
@@ -18,6 +20,22 @@ Last updated: 2025-12-03
 <div align="center">
   <img src="https://github.com/user-attachments/assets/6f9b90a5-2a4d-4a0a-abe5-00dc712db5bc" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
 </div>
+
+`E.g of Multi-region approach`:
+
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/6e09cd6a-9493-4afd-8145-eeb64136363a" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
+</div>
+
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/412bbf8d-33bb-42db-ae02-7405b0a58785" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
+</div>
+
+> For example East US \& Sweden Central
+
+| East US | Sweden Central | 
+| --- | ---- | 
+| <img width="1891" height="417" alt="image" src="https://github.com/user-attachments/assets/edee7ca9-5148-4ee0-b461-1b8960550226" /> | <img width="1892" height="478" alt="image" src="https://github.com/user-attachments/assets/92d00545-757a-462a-8bba-a42a1cbc5eff" /> | 
 
 ## Prerequisites
 
@@ -119,7 +137,7 @@ graph TD;
 
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-1696-limegreen" alt="Total views">
-  <p>Refresh Date: 2025-12-04</p>
+  <img src="https://img.shields.io/badge/Total%20views-1367-limegreen" alt="Total views">
+  <p>Refresh Date: 2026-01-08</p>
 </div>
 <!-- END BADGE -->
