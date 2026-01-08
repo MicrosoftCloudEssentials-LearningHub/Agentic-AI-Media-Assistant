@@ -83,7 +83,7 @@ Last updated: 2026-01-08
     
     | Models | Agents | 
     | --- | ---- | 
-    | <img width="1891" height="417" alt="image" src="" /> | <img width="1892" height="478" alt="image" src="" /> | 
+    | <img width="1891" height="417" alt="image" src="https://github.com/user-attachments/assets/c5d882da-d189-47ff-a4c4-2476d33c19b7" /> | <img width="1892" height="478" alt="image" src="" /> | 
 
 **East US (1):**
 
