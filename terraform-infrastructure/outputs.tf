@@ -48,6 +48,27 @@ output "resource_group_name" {
   description = "Resource group name"
 }
 
+output "agent_region_assignments" {
+  description = "Agent-to-region mapping configuration"
+  value       = var.agent_region_assignments
+}
+
+output "agent_model_assignments" {
+  description = "Agent-to-model mapping configuration"
+  value       = var.agent_model_assignments
+}
+
+output "model_regions" {
+  description = "Model-to-region deployment mapping"
+  value       = local.model_regions_final
+}
+
+output "model_specs" {
+  description = "Model specifications and versions"
+  value       = var.model_specs
+  sensitive   = false
+}
+
 output "subscription_id" {
   value       = data.azurerm_client_config.current.subscription_id
   description = "Azure subscription ID"

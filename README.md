@@ -36,54 +36,59 @@ Last updated: 2026-01-07
 ## Key Features
 
 - **Media-Centric AI Processing**: Specialized agents for image, video, and document manipulation workflows
-- **6-Agent Architecture**: Specialized AI agents with intelligent task delegation:
-  - **Main Orchestrator**: Central request router (model-router) that analyzes user requests and delegates to specialized agents
-  - **Image Cropping Specialist**: Smart object detection and cropping (GPT-4o vision)
-  - **Background Modification Agent**: Background removal/replacement (FLUX.2-pro)
-  - **Thumbnail Generation Agent**: Creates eye-catching thumbnails (DALL-E 3)
-  - **Video Processing Agent**: Native video generation with Sora or image-sequence fallback
-  - **Document Processor**: PDF/document analysis and extraction (FLUX.1-Kontext-pro)
+- **Multi-Region Architecture**: 2 Azure AI Foundry projects across 2 regions for optimal performance:
+  - **Sweden Central** (Primary): 4 agents + 4 models (orchestration, cropping, video, documents)
+  - **East US** (Secondary): 1 agent + 1 model (visual content generation with low latency)
+- **5-Agent Architecture**: Specialized AI agents with intelligent task delegation:
+  - **Main Orchestrator** (Sweden): Central request router (model-router) with 18-model intelligent routing
+  - **Cropping Specialist** (Sweden): Smart object detection and cropping (GPT-4o vision)
+  - **Visual Content Specialist** (East US): Background removal/replacement + thumbnail generation (FLUX.2-pro)
+  - **Video Processing Agent** (Sweden): Native video generation with Sora
+  - **Document Processor** (Sweden): PDF/document analysis and extraction (FLUX.1-Kontext-pro)
 - **Real-Time Image Processing**: Upload or paste images directly into the chat for immediate agent action
-- **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents
+- **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents across multiple projects
 - **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle
 - **Advanced Task Coordination**: Inter-agent task delegation (e.g., "Crop this, then change background, then add text")
+- **Dynamic Configuration**: All settings managed via [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) - no code changes needed
 
-## Specialized Models
+## Specialized Models (5 Total)
 
-Each agent uses a specialized model as its "brain" optimized for its domain:
-- **Model Router** (Orchestrator): Dynamically selects best LLM (gpt-4o/gpt-4o-mini)
+**Sweden Central (4 models):**
+- **Model Router** (Orchestrator): Azure OpenAI Model Router (2025-11-18) - Intelligent routing across 18 models
 - **GPT-4o** (Cropping Agent): Vision and image understanding capabilities
-- **FLUX.2-pro** (Background Agent): Advanced artistic image generation and manipulation
-- **DALL-E 3** (Thumbnail Generator): High-quality image creation for thumbnails
 - **Sora** (Video Agent): Native video generation from text prompts
 - **FLUX.1-Kontext-pro** (Document Agent): Contextual understanding and PDF/document processing
 
+**East US (1 model):**
+- **FLUX.2-pro** (Visual Content Agent): Advanced artistic image generation, background manipulation, and thumbnail creation
+
 > [!NOTE]
-> **Multi-Model SME Collaboration**
+> **Multi-Model Multi-Region SME Collaboration**
 > 
-> This solution uses a **collaborative multi-agent approach** where multiple AI models work together as Subject Matter Experts (SMEs):
+> This solution uses a **collaborative multi-agent approach across 2 Azure regions** where multiple AI models work together as Subject Matter Experts (SMEs):
 > 
-> **Deployed Model Team:**
-> - **Model Router (Orchestrator Agent)**: Dynamically routes to gpt-4o or gpt-4o-mini based on task complexity
-> - **GPT-4o (Cropping Agent)**: Analyzes images, detects objects, provides cropping coordinates using vision
-> - **FLUX.2-pro (Background Agent)**: Generates and manipulates backgrounds with advanced artistic capabilities
-> - **DALL-E 3 (Thumbnail Agent)**: Creates eye-catching thumbnails and promotional images
-> - **Sora (Video Agent)**: Native video generation from text prompts with smooth, realistic motion
+> **Sweden Central - Primary Hub (4 models, 4 agents):**
+> - **Model Router (Orchestrator Agent)**: Azure OpenAI Model Router (2025-11-18) - Intelligently routes requests to optimal model among 18 options (GPT-4o, GPT-4o-mini, Claude, DeepSeek, Llama, Grok, etc.)
+> - **GPT-4o (Cropping Agent)**: Vision-based object detection and cropping coordination
+> - **Sora (Video Agent)**: Native video generation with smooth, realistic motion
 > - **FLUX.1-Kontext-pro (Document Agent)**: Extracts text, analyzes PDFs, understands document context
 >
-> **How They Work Together:**
-> 1. **Orchestrator** (model-router) analyzes user requests and routes to the appropriate specialist
-> 2. **Cropping Agent** (GPT-4o) uses vision to identify and crop objects from images
-> 3. **Background Agent** (FLUX.2-pro) creates or replaces backgrounds with artistic precision
-> 4. **Thumbnail Agent** (DALL-E 3) generates compelling thumbnails for videos or images
-> 5. **Video Agent** (Sora) creates smooth, high-quality videos from text descriptions
-> 6. **Document Agent** (FLUX.1-Kontext-pro) processes PDFs and extracts structured information
+> **East US - Visual Content Hub (1 model, 1 agent):**
+> - **FLUX.2-pro (Visual Content Specialist)**: Consolidated agent for backgrounds, thumbnails, and artistic image generation with low latency
 >
-> **Benefits of Specialized SME Models:**
-> - Each model excels at its specific domain (no overlap)
-> - Higher quality through specialization vs. one general-purpose model
-> - Better performance: lightweight models for simple tasks, powerful models for complex ones
-> - Clear separation of concerns: vision, generation, context, video
+> **How They Work Together:**
+> 1. **Orchestrator** (Sweden - model-router) receives all requests and routes to appropriate specialist
+> 2. **Cropping Agent** (Sweden - GPT-4o) uses vision to identify and crop objects
+> 3. **Visual Content Specialist** (East US - FLUX.2-pro) handles backgrounds and thumbnails with co-located model for fast generation
+> 4. **Video Agent** (Sweden - Sora) creates smooth, high-quality videos from text descriptions
+> 5. **Document Agent** (Sweden - FLUX.1-Kontext-pro) processes PDFs and extracts structured information
+>
+> **Benefits of Multi-Region Architecture:**
+> - **Specialized models per domain**: Each model excels at its specific task (vision, generation, video, documents)
+> - **Optimized latency**: Visual content generation co-located with FLUX.2-pro in East US for fast image operations
+> - **Geographic distribution**: Primary processing in Sweden Central, intensive image generation in East US
+> - **Intelligent routing**: Model Router automatically selects best model for each request
+> - **Consolidated workflows**: Visual Content Specialist handles multiple related tasks (backgrounds + thumbnails) efficiently
 >
 > [!NOTE]
 > **Video Generation with Sora**
@@ -94,11 +99,11 @@ Each agent uses a specialized model as its "brain" optimized for its domain:
 
 > [!WARNING]
 > **Azure Quota and Model Availability**
-> The models deployed (`GPT-4o`, `FLUX.2-pro`, `FLUX.1-Kontext-pro`, `Sora`) require GPU capacity and are subject to Azure quotas.
+> The models deployed (`model-router`, `GPT-4o`, `FLUX.2-pro`, `FLUX.1-Kontext-pro`, `Sora`) require GPU capacity and are subject to Azure quotas.
 >
 > **If you encounter deployment errors related to "Insufficient Quota"**, request a quota increase: [Azure Support](https://portal.azure.com/#blade/Microsoft_Azure_Support/HelpAndSupportBlade/newsupportrequest)
 >
-> **Current Deployment** uses GPT-4o-mini for fast tasks and specialized models for domain-specific operations.
+> **Multi-Region Deployment**: Sweden Central hosts 4 models, East US hosts 1 model. All models use **GlobalStandard** SKU for optimal performance and availability.
 
 ## Architecture
 
@@ -106,46 +111,55 @@ Each agent uses a specialized model as its "brain" optimized for its domain:
 graph TD
     User[User] <--> UI[Media Studio UI]
     UI <--> App[FastAPI Application]
-    App <--> Orchestrator[Main Orchestrator<br/>Model Router]
+    App <--> Orchestrator[Main Orchestrator<br/>Model Router<br/>Sweden Central]
     
-    Orchestrator <--> Crop[Cropping Agent<br/>GPT-4o Vision]
-    Orchestrator <--> BG[Background Agent<br/>FLUX.2-pro]
-    Orchestrator <--> Thumb[Thumbnail Generator<br/>DALL-E 3]
-    Orchestrator <--> Video[Video Agent<br/>Sora]
-    Orchestrator <--> Doc[Document Agent<br/>FLUX.1-Kontext-pro]
+    Orchestrator <--> Crop[Cropping Agent<br/>GPT-4o<br/>Sweden Central]
+    Orchestrator <--> Visual[Visual Content Specialist<br/>FLUX.2-pro<br/>East US]
+    Orchestrator <--> Video[Video Agent<br/>Sora<br/>Sweden Central]
+    Orchestrator <--> Doc[Document Agent<br/>FLUX.1-Kontext-pro<br/>Sweden Central]
     
-    subgraph "Azure AI Foundry"
+    subgraph "Sweden Central Project"
         Orchestrator
         Crop
-        BG
-        Thumb
         Video
         Doc
     end
+    
+    subgraph "East US Project"
+        Visual
+    end
 ```
+
+**Multi-Region Agent Distribution:**
+- **Sweden Central**: Orchestrator, Cropping Specialist, Video Agent, Document Processor
+- **East US**: Visual Content Specialist (backgrounds + thumbnails)
 
 ## What Happens Under the Hood?
 
 > When you run `terraform apply`, the following automated sequence occurs:
 
 1. **Infrastructure Provisioning**:
-   - Creates Resource Group, Azure AI Foundry, Key Vault, Storage Account, and Container Registry (ACR)
-   - Deploys specialized AI Models:
-     - **GPT-4o** (Vision and cropping tasks)
-     - **GPT-4o-mini** (Lightweight routing tasks)
-     - **DALL-E 3** (Thumbnail generation)
-     - **FLUX.2-pro** (Background generation and manipulation)
-     - **FLUX.1-Kontext-pro** (Document processing and contextual understanding)
-     - **Sora** (Native video generation)
-   - All models use **Managed Identity** for secure authentication (no API keys stored)
+   - Creates Resource Group, 2 Azure AI Foundry projects (Sweden Central + East US), Key Vault, Storage Account, and Container Registry (ACR)
+   - **Multi-Region Model Deployment**:
+     - **Sweden Central (4 models)**:
+       - **Model Router** (Orchestrator - automatic model selection from 18+ options)
+       - **GPT-4o** (Vision and cropping tasks)
+       - **Sora** (Native video generation)
+       - **FLUX.1-Kontext-pro** (Document processing and contextual understanding)
+     - **East US (1 model)**:
+       - **FLUX.2-pro** (Background generation, thumbnail creation, artistic image manipulation)
+   - All models use **GlobalStandard** SKU for optimal performance
+   - All resources use **Managed Identity** for secure authentication (no API keys stored)
 
 2. **Automated Agent Creation**:
    - **Fully automated by Terraform**: No manual intervention required
-   - Installs the `azure-ai-projects` SDK and connects to MSFT Foundry
-   - Creates specialized media processing agents with specific model assignments
-   - Automatically stores agent IDs in Azure Key Vault for secure access
+   - Installs the `azure-ai-projects` SDK and connects to MSFT Foundry projects in both regions
+   - Creates specialized media processing agents with region-specific model assignments:
+     - **Sweden Central**: Orchestrator, Cropping Specialist, Video Agent, Document Processor
+     - **East US**: Visual Content Specialist
+   - Automatically stores agent IDs in Azure Key Vault for secure access with region prefixes
    - Web app retrieves agent configuration from Key Vault automatically
-   - **Zero manual configuration** - Terraform handles all agent deployment and setup
+   - **Zero manual configuration** - Terraform handles all multi-region agent deployment and setup
 
 3. **Application Deployment**:
    - Builds the Docker container in the cloud (ACR Build)
@@ -163,17 +177,19 @@ graph TD
 
 2. **Verify Agent Architecture**:
    - Go to the [MSFT Foundry Portal](https://ai.azure.com)
-   - Navigate to your project -> **Build** -> **Agents**
-   - You should see the specialized media agents listed with their assigned models
-   - **Agent IDs are automatically stored in Azure Key Vault** and retrieved by the web app
+   - Check **Sweden Central Project** -> **Build** -> **Agents**:
+     - Should see: Orchestrator, Cropping Specialist, Video Agent, Document Processor (4 agents)
+   - Check **East US Project** -> **Build** -> **Agents**:
+     - Should see: Visual Content Specialist (1 agent)
+   - **Agent IDs are automatically stored in Azure Key Vault** with region prefixes and retrieved by the web app
 
 3. **Test Media Processing**: For example:
    - **Image Upload**: Upload an image and ask "Crop the main subject"
-   - **Background**: "Change the background to a beach scene"
-   - **Thumbnail**: "Create a thumbnail with the text 'AMAZING'"
+   - **Background**: "Change the background to a beach scene" (routed to East US for fast generation)
+   - **Thumbnail**: "Create a thumbnail with the text 'AMAZING'" (routed to East US)
    - **Multi-Step**: "Crop the car, put it on a race track background, and add the text 'SPEED' in red"
-   - **Video**: "Generate a 5-second video of a sunset over mountains"
-   - **Document**: "Extract all text from this PDF" or "Summarize this document"
+   - **Video**: "Generate a 5-second video of a sunset over mountains" (Sweden Central - Sora)
+   - **Document**: "Extract all text from this PDF" or "Summarize this document" (Sweden Central - FLUX.1-Kontext-pro)
 
 <!-- START BADGE -->
 <div align="center">

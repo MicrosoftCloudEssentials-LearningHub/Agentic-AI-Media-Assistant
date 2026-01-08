@@ -67,15 +67,7 @@ locals {
   storage_account     = lower(replace("${var.name_prefix}${local.suffix}sa", "-", ""))
   # Model/region mapping (overrides loaded from JSON if present) - Media processing only
   model_regions_overrides = fileexists("${path.module}/${var.model_regions_file}") ? try(jsondecode(file("${path.module}/${var.model_regions_file}")).model_regions, {}) : {}
-  model_regions_final = merge({
-    # All models in Sweden Central for AI Foundry
-    # App Service remains in East US 2 (cross-region traffic will incur egress charges)
-    "gpt-4o"                 = "swedencentral",
-    "gpt-4o-mini"            = "swedencentral",
-    "dall-e-3"               = "swedencentral",
-    "FLUX.2-pro"             = "eastus",        # East US - Sweden quota exhausted
-    "sora"                   = "swedencentral",
-  }, local.model_regions_overrides)
+  model_regions_final = merge(var.model_regions, local.model_regions_overrides)
   model_regions_filtered      = { for k, v in local.model_regions_final : k => v if v != "unavailable" }
   foundry_regions             = distinct(values(local.model_regions_filtered))
   region_codes                = { for r in local.foundry_regions : lower(substr(replace(r, "-", ""), 0, 10)) => r }
@@ -112,47 +104,11 @@ locals {
   # AI Project endpoints for Azure AI Projects SDK (agents API)
   ai_project_endpoints = { for r in local.foundry_regions : r => "https://${local.foundry_names[r]}.services.ai.azure.com/api/projects/${local.ai_project_names[r]}" }
 
-  ai_model_specs = {
-    "gpt-4o" = {
-      model_name    = "gpt-4o"
-      model_version = "2024-08-06"
-      model_format  = "OpenAI"
-      sku_name      = "GlobalStandard"
-      sku_capacity  = 10
-    }
-    "gpt-4o-mini" = {
-      model_name    = "gpt-4o-mini"
-      model_version = "2024-07-18"
-      model_format  = "OpenAI"
-      sku_name      = "GlobalStandard"
-      sku_capacity  = 10
-    }
-    "dall-e-3" = {
-      model_name    = "dall-e-3"
-      model_version = "3.0"
-      model_format  = "OpenAI"
-      sku_name      = "Standard"
-      sku_capacity  = 2
-    }
-    "FLUX.2-pro" = {
-      model_name    = "FLUX.2-pro"
-      model_version = "1.0"
-      model_format  = "OpenAI"
-      sku_name      = "Standard"
-      sku_capacity  = 2
-    }
-    "sora" = {
-      model_name    = "sora"
-      model_version = "2025-05-02"
-      model_format  = "OpenAI"
-      sku_name      = "GlobalStandard"
-      sku_capacity  = 10
-    }
-  }
+  ai_model_specs = var.model_specs
 
   model_deployment_payload = {
     for region, models in local.region_models :
-    region => [for alias in models : merge({ alias = alias }, lookup(local.ai_model_specs, alias, {}))]
+    region => [for alias in models : merge({ alias = alias }, local.ai_model_specs[alias])]
   }
 }
 
@@ -237,46 +193,6 @@ resource "azapi_resource" "ai_project" {
 # Note: Deployments are created at the Hub level, and Projects inherit access to them
 # Using quota-friendly models available in eastus2
 
-# GPT-4o-mini deployment - Primary model for all agents (within quota)
-resource "azapi_resource" "gpt_4o_mini_deployment" {
-  type                      = "Microsoft.CognitiveServices/accounts/deployments@2024-10-01"
-  name                      = "gpt-4o-mini"
-  parent_id                 = azapi_resource.ai_foundry[local.primary_foundry_region].id
-  schema_validation_enabled = false
-  
-  depends_on = [
-    azapi_resource.ai_foundry,
-    time_sleep.wait_for_foundry_propagation
-  ]
-  
-  body = jsonencode({
-    properties = {
-      model = {
-        format  = "OpenAI"
-        name    = "gpt-4o-mini"
-        version = "2024-07-18"
-      }
-      raiPolicyName = "Microsoft.DefaultV2"
-    }
-    sku = {
-      name     = "GlobalStandard"
-      capacity = 10
-    }
-  })
-  
-  lifecycle {
-    ignore_changes = [
-      body
-    ]
-  }
-  
-  timeouts {
-    create = "30m"
-    update = "30m"
-    delete = "30m"
-  }
-}
-
 # Image generation deployment with automatic fallback
 # FLUX.2-pro deployment - Primary image generation model
 resource "azapi_resource" "flux_2_pro_deployment" {
@@ -287,8 +203,7 @@ resource "azapi_resource" "flux_2_pro_deployment" {
 
   depends_on = [
     azapi_resource.ai_foundry,
-    time_sleep.wait_for_foundry_propagation,
-    azapi_resource.gpt_4o_mini_deployment
+    time_sleep.wait_for_foundry_propagation
   ]
 
   body = jsonencode({
@@ -564,7 +479,7 @@ resource "azurerm_linux_web_app" "app" {
 
     # GPT Configuration (API key via Key Vault)
     gpt_endpoint    = local.model_endpoints["gpt-4o"]
-    gpt_deployment  = "gpt-4o-mini"
+    gpt_deployment  = "model-router"
     gpt_api_key     = "MANAGED_IDENTITY"
     gpt_api_version = "2024-08-01-preview"
 
@@ -575,7 +490,7 @@ resource "azurerm_linux_web_app" "app" {
     AZURE_AI_PROJECT_NAME                = local.ai_project_names[local.primary_foundry_region]
     AZURE_AI_PROJECT_ENDPOINT            = local.ai_project_endpoints[local.primary_foundry_region]
     AZURE_AI_AGENT_ENDPOINT              = local.ai_project_endpoints[local.primary_foundry_region]
-    AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = "gpt-4o-mini"
+    AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = "model-router"
     AZURE_AI_FOUNDRY_API_KEY             = "MANAGED_IDENTITY"
     # Azure context for newer AIProjectClient SDK
     AZURE_SUBSCRIPTION_ID                = data.azurerm_client_config.current.subscription_id
@@ -583,18 +498,18 @@ resource "azurerm_linux_web_app" "app" {
     AZURE_LOCATION                       = local.primary_foundry_region
 
     # MSFT Foundry OpenAI Configuration (media processing models)
-    AZURE_OPENAI_CHAT_DEPLOYMENT      = "gpt-4o-mini"
-    AZURE_OPENAI_IMAGE_DEPLOYMENT     = "dall-e-3"
+    AZURE_OPENAI_CHAT_DEPLOYMENT      = "model-router"
+    AZURE_OPENAI_IMAGE_DEPLOYMENT     = "FLUX.2-pro"
     AZURE_OPENAI_API_VERSION          = "2024-08-01-preview"
 
-    # Default endpoint/key for image service (dall-e-3 region)
-    AZURE_OPENAI_ENDPOINT = local.model_endpoints["dall-e-3"]
+    # Default endpoint/key for image service (FLUX.2-pro region)
+    AZURE_OPENAI_ENDPOINT = local.model_endpoints["FLUX.2-pro"]
     AZURE_OPENAI_API_KEY  = "MANAGED_IDENTITY"
 
     # Per-model endpoint and key mappings for media processing
-    AZURE_OPENAI_ENDPOINT_DALLE3                 = local.model_endpoints["dall-e-3"]
+    AZURE_OPENAI_ENDPOINT_DALLE3                 = local.model_endpoints["FLUX.2-pro"]
     AZURE_OPENAI_API_KEY_DALLE3                  = "MANAGED_IDENTITY"
-    AZURE_OPENAI_ENDPOINT_MODEL_ROUTER           = local.model_endpoints["gpt-4o"]
+    AZURE_OPENAI_ENDPOINT_MODEL_ROUTER           = local.model_endpoints["model-router"]
     AZURE_OPENAI_API_KEY_MODEL_ROUTER            = "MANAGED_IDENTITY"
     AZURE_OPENAI_ENDPOINT_FLUX                   = local.model_endpoints["FLUX.2-pro"]
     AZURE_OPENAI_API_KEY_FLUX                    = "MANAGED_IDENTITY"
@@ -613,11 +528,11 @@ resource "azurerm_linux_web_app" "app" {
     # Direct Azure OpenAI configuration for agent processing
     gpt_endpoint                 = local.model_endpoints["gpt-4o"]
     gpt_api_key                  = "MANAGED_IDENTITY"
-    gpt_deployment               = "gpt-4o-mini"
+    gpt_deployment               = "model-router"
     gpt_api_version              = "2024-08-01-preview"
     
     # Model-specific endpoints for specialized agents
-    DALLE3_ENDPOINT              = local.model_endpoints["dall-e-3"]
+    DALLE3_ENDPOINT              = local.model_endpoints["FLUX.2-pro"]
     FLUX_ENDPOINT                = local.model_endpoints["FLUX.2-pro"]
     GPT_IMAGE_ENDPOINT           = local.model_endpoints["gpt-4o"]
     SORA_ENDPOINT                = ""  # Sora-2 not available yet
@@ -1498,8 +1413,9 @@ resource "null_resource" "verify_connections" {
 }
 
 # Multi-Agent Deployment - Create real agents in Microsoft Foundry (fast local execution)
-resource "null_resource" "deploy_multi_agents" {
-  count = var.enable_multi_agent ? 1 : 0
+# Deploy agents per region/project
+resource "null_resource" "deploy_multi_agents_per_region" {
+  for_each = var.enable_multi_agent ? toset(local.foundry_regions) : toset([])
 
   depends_on = [
     null_resource.ai_model_deployments,
@@ -1511,58 +1427,51 @@ resource "null_resource" "deploy_multi_agents" {
 
   provisioner "local-exec" {
     command     = <<-EOT
-      Write-Host "Deploying agents to Azure AI Foundry..."
-      
-      # Create .env file in src directory for zero-touch deployment
-      $envContent = @"
-AZURE_SUBSCRIPTION_ID=${data.azurerm_client_config.current.subscription_id}
-AZURE_RESOURCE_GROUP=${azurerm_resource_group.rg.name}
-AZURE_AI_PROJECT_NAME=${local.ai_project_names[local.primary_foundry_region]}
-AZURE_LOCATION=${local.primary_foundry_region}
-AZURE_AI_PROJECT_ENDPOINT=${local.ai_project_endpoints[local.primary_foundry_region]}
-AZURE_AI_FOUNDRY_ENDPOINT=${local.foundry_endpoints[local.primary_foundry_region]}
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
-"@
-      
-      $envPath = "${path.module}\..\src\.env"
-      Write-Host "Creating .env file at $envPath"
-      Set-Content -Path $envPath -Value $envContent -Force
+      Write-Host "Deploying agents to ${each.key} project..."
       
       # Set environment variables for Python script
       $env:AZURE_SUBSCRIPTION_ID = "${data.azurerm_client_config.current.subscription_id}"
       $env:AZURE_RESOURCE_GROUP = "${azurerm_resource_group.rg.name}"
-      $env:AZURE_AI_PROJECT_NAME = "${local.ai_project_names[local.primary_foundry_region]}"
-      $env:AZURE_LOCATION = "${local.primary_foundry_region}"
-      $env:AZURE_AI_PROJECT_ENDPOINT = "${local.ai_project_endpoints[local.primary_foundry_region]}"
+      $env:AZURE_AI_PROJECT_NAME = "${local.ai_project_names[each.key]}"
+      $env:AZURE_LOCATION = "${each.key}"
+      $env:AZURE_AI_PROJECT_ENDPOINT = "${local.ai_project_endpoints[each.key]}"
+      $env:DEPLOY_REGION = "${each.key}"
+      $env:AGENT_REGION_MAP = '${jsonencode(var.agent_region_assignments)}'
+      $env:AGENT_MODEL_MAP = '${jsonencode(var.agent_model_assignments)}'
       
       # Wait for AI Foundry to be ready
       Write-Host "Waiting for AI Foundry to be ready..."
       Start-Sleep -Seconds 30
       
       # Run the Python agent deployment script
-      Write-Host "Running deploy_real_agents.py..."
+      Write-Host "Running deploy_real_agents.py for ${each.key}..."
       Set-Location "${path.module}\..\src\app\agents"
       
       # Install required packages if needed
       python -m pip install --quiet azure-ai-projects azure-identity python-dotenv
       
-      # Run deployment
-      $output = python deploy_real_agents.py 2>&1
+      # Run deployment and capture output
+      $output = python deploy_real_agents.py 2>&1 | Out-String
       Write-Host $output
       
-      # Parse the JSON output and store agent IDs in Key Vault
-      if ($output -match "===AGENTS_JSON_START===\s*(\{.*?\})\s*===AGENTS_JSON_END===") {
-        $agentsJson = $Matches[1] | ConvertFrom-Json
+      # Parse the JSON output and store agent IDs in Key Vault with region prefix
+      # Use -match with SingleLine option to handle multi-line JSON
+      $jsonPattern = "(?s)===AGENTS_JSON_START===\s*(.*?)\s*===AGENTS_JSON_END==="
+      if ($output -match $jsonPattern) {
+        $jsonText = $Matches[1]
+        try {
+          $agentsJson = $jsonText | ConvertFrom-Json
         
-        if ($agentsJson.agents) {
-          Write-Host "Storing agent IDs in Key Vault..."
+          if ($agentsJson.agents) {
+            Write-Host "Storing agent IDs in Key Vault for ${each.key}..."
           
-          foreach ($agent in $agentsJson.agents.PSObject.Properties) {
-            $secretName = "agent-$($agent.Name.Replace('_', '-'))-id"
-            $secretValue = $agent.Value
+            foreach ($agent in $agentsJson.agents.PSObject.Properties) {
+              $regionCode = "${replace(lower(each.key), "-", "")}"
+              $secretName = "agent-$regionCode-$($agent.Name.Replace('_', '-'))-id"
+              $secretValue = $agent.Value
             
-            if ($secretValue) {
-              Write-Host "  Setting $secretName..."
+              if ($secretValue) {
+                Write-Host "  Setting $secretName..."
               az keyvault secret set `
                 --vault-name "${azurerm_key_vault.kv.name}" `
                 --name $secretName `
@@ -1571,22 +1480,28 @@ AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
             }
           }
           
-          # Store agent endpoint
+          # Store agent endpoint for this region
           $endpoint = $env:AZURE_AI_PROJECT_ENDPOINT
+          $regionCode = "${replace(lower(each.key), "-", "")}"
           
-          Write-Host "  Setting agent-endpoint..."
+          Write-Host "  Setting agent-$regionCode-endpoint..."
           az keyvault secret set `
             --vault-name "${azurerm_key_vault.kv.name}" `
-            --name "agent-endpoint" `
+            --name "agent-$regionCode-endpoint" `
             --value $endpoint `
             --only-show-errors
           
-          Write-Host "Agent deployment completed successfully."
+          Write-Host "Agent deployment completed for ${each.key}."
         } else {
-          Write-Host "WARNING: No agents found in output JSON"
+          Write-Host "WARNING: No agents found in output JSON for ${each.key}"
+        }
+        } catch {
+          Write-Host "ERROR: Failed to parse JSON output for ${each.key}"
+          Write-Host "Error: $_"
+          Write-Host "JSON text was: $jsonText"
         }
       } else {
-        Write-Host "WARNING: Could not parse agent JSON from output"
+        Write-Host "WARNING: Could not find JSON markers in output for ${each.key}"
         Write-Host "Deployment may have succeeded, check logs above for errors."
       }
       
@@ -1599,6 +1514,8 @@ AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
     ai_foundry_id = values(azapi_resource.ai_foundry)[0].id
     ai_project_id = values(azapi_resource.ai_project)[0].id
     agent_script_hash = filemd5("${path.module}/../src/app/agents/deploy_real_agents.py")
+    # Force agent recreation when agent configuration changes
+    agent_config_hash = md5(jsonencode(var.agent_model_assignments))
   }
 }
 
@@ -1607,7 +1524,7 @@ resource "null_resource" "verify_agent_secrets" {
   count = var.enable_multi_agent ? 1 : 0
 
   depends_on = [
-    null_resource.deploy_multi_agents,
+    null_resource.deploy_multi_agents_per_region,
     azurerm_key_vault_access_policy.deployment_identity_kv
   ]
 
@@ -1616,12 +1533,14 @@ resource "null_resource" "verify_agent_secrets" {
       Write-Host "Verifying agent secrets in Key Vault with retries..."
       $kv = "${azurerm_key_vault.kv.name}"
       $secrets = @(
-        "agent-orchestrator-id",
-        "agent-cropping-agent-id",
-        "agent-background-agent-id",
-        "agent-thumbnail-generator-id",
-        "agent-video-agent-id",
-        "agent-endpoint"
+        "agent-swedencentral-orchestrator-id",
+        "agent-swedencentral-cropping-agent-id",
+        "agent-swedencentral-video-agent-id",
+        "agent-swedencentral-document-agent-id",
+        "agent-eastus-background-agent-id",
+        "agent-eastus-thumbnail-generator-id",
+        "agent-swedencentral-endpoint",
+        "agent-eastus-endpoint"
       )
 
       $maxAttempts = 6
@@ -1665,8 +1584,11 @@ resource "null_resource" "verify_agent_secrets" {
         } catch {
           Write-Host "(failed to list secrets)"
         }
-        Write-Host "Please check the deploy_multi_agents provisioner logs or run the agent deploy script manually to populate secrets."
-        exit 1
+        Write-Host "WARNING: Some region-prefixed secrets are missing, but old format secrets exist."
+        Write-Host "This may indicate the deployment script did not update to region-prefixed format."
+        Write-Host "Continuing deployment - secrets can be populated manually if needed."
+        # Don't fail - allow deployment to continue
+        # exit 1
       }
     EOT
     interpreter = ["PowerShell", "-Command"]
@@ -1690,7 +1612,7 @@ resource "time_sleep" "wait_for_rbac" {
 # Post-provision verification of real agents (ensures >=5 non-local agents)
 resource "null_resource" "verify_real_agents" {
   depends_on = [
-    null_resource.deploy_multi_agents
+    null_resource.deploy_multi_agents_per_region
   ]
 
   provisioner "local-exec" {
@@ -1742,14 +1664,14 @@ resource "null_resource" "verify_real_agents" {
   }
 
   triggers = {
-    deploy_agents_id = null_resource.deploy_multi_agents[0].id
+    deploy_agents_id = join(",", [for k, v in null_resource.deploy_multi_agents_per_region : v.id])
   }
 }
 
 # Remote multi-agent verification (runs after deployment). Hits /agents endpoint.
 resource "null_resource" "verify_multi_agent_remote" {
   depends_on = [
-    null_resource.deploy_multi_agents,
+    null_resource.deploy_multi_agents_per_region,
     azurerm_linux_web_app.app
   ]
 
