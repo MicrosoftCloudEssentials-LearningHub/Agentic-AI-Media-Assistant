@@ -13,6 +13,8 @@ Last updated: 2026-01-07
 - [Foundry Models sold directly by Azure](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/concepts/models-sold-directly-by-azure?view=foundry-classic&pivots=azure-openai&tabs=global-standard-aoai%2Cstandard-chat-completions%2Cglobal-standard#azure-openai-in-microsoft-foundry-models) - models available 
 - [Timelines for Foundry Models](https://learn.microsoft.com/en-us/azure/ai-foundry/concepts/model-lifecycle-retirement?view=foundry-classic#timelines-for-foundry-models) - retirement dates
 - [Azure OpenAI in Microsoft Foundry model deprecations and retirements](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/model-retirements?view=foundry-classic&tabs=text#current-models) - deprecation Date
+- [Use model router for Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/model-router?view=foundry-classic) - model-router LLMs
+- [Model summary table and region availability](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/concepts/models-sold-directly-by-azure?view=foundry-classic&pivots=azure-openai&tabs=global-standard-aoai%2Cstandard-chat-completions%2Cglobal-standard#model-summary-table-and-region-availability) - table summary
 - [Baseline architecture for an Azure Kubernetes Service (AKS) cluster](https://learn.microsoft.com/en-us/azure/architecture/reference-architectures/containers/aks/baseline-aks)
 - [Run your functions from a package file in Azure](https://learn.microsoft.com/en-us/azure/azure-functions/run-functions-from-deployment-package)
 - [What is Microsoft Translator Pro?](https://learn.microsoft.com/en-us/azure/ai-services/translator/solutions/translator-pro/overview)
@@ -20,6 +22,8 @@ Last updated: 2026-01-07
 - [AI Leaderboards](https://llm-stats.com/) - general ref
 - [How to Stream Agent Responses](https://learn.microsoft.com/en-us/semantic-kernel/frameworks/agent/agent-streaming?utm_source=copilot.com&pivots=programming-language-python)
 - [How to enable Live Streaming over Direct Line for a Copilot Studio - deployed agent?](https://github.com/Microsoft/BotFramework-WebChat/issues/5628?utm_source=copilot.com)
+- [Azure OpenAI Responses API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/responses?view=foundry-classic&tabs=python-key)
+- [Foundry Control Plane: Managing AI agents at scale | BRK202](https://www.youtube.com/watch?v=XjVj_qRwzVg)
 
 </details>
 
@@ -39,50 +43,52 @@ Last updated: 2026-01-07
 
 ## Key Features
 
+> [!WARNING]
+> **Multi-Region Deployment**: Sweden Central hosts 4 models, East US hosts 1 model. All models use **GlobalStandard** SKU for optimal performance and availability.
+
+> For example East US \& Sweden Central:
+
+| East US | Sweden Central | 
+| --- | ---- | 
+| <img width="1891" height="417" alt="image" src="https://github.com/user-attachments/assets/edee7ca9-5148-4ee0-b461-1b8960550226" /> | <img width="1892" height="478" alt="image" src="https://github.com/user-attachments/assets/92d00545-757a-462a-8bba-a42a1cbc5eff" /> | 
+
 - **Media-Centric AI Processing**: Specialized agents for image, video, and document manipulation workflows
 - **Multi-Region Architecture**: 2 Azure AI Foundry projects across 2 regions for optimal performance:
   - **Sweden Central** (Primary): 4 agents + 4 models (orchestration, cropping, video, documents)
   - **East US** (Secondary): 1 agent + 1 model (visual content generation with low latency)
 - **5-Agent Architecture**: Specialized AI agents with intelligent task delegation:
-  - **Main Orchestrator** (Sweden): Central request router (model-router) with 18-model intelligent routing
-  - **Cropping Specialist** (Sweden): Smart object detection and cropping (GPT-4o vision)
-  - **Visual Content Specialist** (East US): Background removal/replacement + thumbnail generation (FLUX.2-pro)
-  - **Video Processing Agent** (Sweden): Native video generation with Sora
-  - **Document Processor** (Sweden): PDF/document analysis and extraction (FLUX.1-Kontext-pro)
+  - **Main Orchestrator** (Sweden): Central request router (`model-router`) with 18-model intelligent routing
+  - **Cropping Specialist** (Sweden): Smart object detection and cropping (`GPT-4o vision`)
+  - **Visual Content Specialist** (East US): Background removal/replacement + thumbnail generation (`FLUX.2-pro`)
+  - **Video Processing Agent** (Sweden): Native video generation with `Sora`
+  - **Document Processor** (Sweden): PDF/document analysis and extraction (`FLUX.1-Kontext-pro`)
 - **Real-Time Image Processing**: Upload or paste images directly into the chat for immediate agent action
 - **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents across multiple projects
 - **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle
 - **Advanced Task Coordination**: Inter-agent task delegation (e.g., "Crop this, then change background, then add text")
-- **Dynamic Configuration**: All settings managed via [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) - no code changes needed
+- **Dynamic Configuration**: All settings managed via [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) - `no code changes needed, just add your values here`
 
-## Specialized Models (5 Total)
+## Specialized Agents (SMEs) (5 Total)
 
 > Each agent uses a specialized model as its "brain" optimized for its domain:
 
 **Sweden Central (4 models):**
 
-- **Model Router** (Orchestrator): Azure OpenAI Model Router (2025-11-18) - Intelligent routing across 18 models
-- **GPT-4o** (Cropping Agent): Vision and image understanding capabilities
-- **Sora** (Video Agent): Native video generation from text prompts
-- **FLUX.1-Kontext-pro** (Document Agent): Contextual understanding and PDF/document processing
+- **Model Router** (Orchestrator): Azure OpenAI Model Router (2025-11-18) ~ Intelligent routing across 18 models, `routes requests to optimal model among 18 options`. Click here to read more about it [Use model router for Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/model-router?view=foundry-classic)
+- **GPT-4o** (Cropping Agent): Vision and image understanding capabilities. ~ `Vision-based object detection and cropping coordination`
+- **Sora** (Video Agent): Native video generation from text prompts `with smooth, realistic motion`
+- **FLUX.1-Kontext-pro** (Document Agent): Contextual understanding and PDF/document processing. ~ `Extracts text, analyzes PDFs, understands document context`
 
 **East US (1 model):**
 
-- **FLUX.2-pro** (Visual Content Agent): Advanced artistic image generation, background manipulation, and thumbnail creation
+- **FLUX.2-pro** (Visual Content Agent): Advanced artistic image generation, background manipulation, and thumbnail creation. ~ `Consolidated agent for backgrounds, thumbnails, and artistic image generation with low latency`
 
-> [!NOTE]
->`Multi-Model Multi-Region SME Collaboration`: This solution uses a **collaborative multi-agent approach across 2 Azure regions** where multiple AI models work together as Subject Matter Experts (SMEs): <br/>
-> **Sweden Central - Primary Hub (4 models, 4 agents):**
->
-> - **Model Router (Orchestrator Agent)**: Azure OpenAI Model Router (2025-11-18) - Intelligently routes requests to optimal model among 18 options (GPT-4o, GPT-4o-mini, Claude, DeepSeek, Llama, Grok, etc.)
-> - **GPT-4o (Cropping Agent)**: Vision-based object detection and cropping coordination
-> - **Sora (Video Agent)**: Native video generation with smooth, realistic motion
-> - **FLUX.1-Kontext-pro (Document Agent)**: Extracts text, analyzes PDFs, understands document context
->
-> **East US - Visual Content Hub (1 model, 1 agent):**
->
-> - **FLUX.2-pro (Visual Content Specialist)**: Consolidated agent for backgrounds, thumbnails, and artistic image generation with low latency
->
+> For example:
+
+| Model | Agent | 
+| --- | ---- | 
+| <img width="1891" height="417" alt="image" src="https://github.com/user-attachments/assets/edee7ca9-5148-4ee0-b461-1b8960550226" /> | <img width="1892" height="478" alt="image" src="https://github.com/user-attachments/assets/77cab91f-85da-4c57-846a-477efbd82f9c" /> | 
+
 > **How They Work Together?**
 >
 > 1. **Orchestrator** (Sweden - model-router) receives all requests and routes to appropriate specialist
@@ -99,17 +105,11 @@ Last updated: 2026-01-07
 > - **Intelligent routing**: Model Router automatically selects best model for each request
 > - **Consolidated workflows**: Visual Content Specialist handles multiple related tasks (backgrounds + thumbnails) efficiently
 
-> [!NOTE]
-> **Video Generation with Sora**: This solution uses **Sora** (version 2025-05-02) for native video generation in Azure AI Foundry.
-> **Sora Deployment**: The model is automatically deployed during `terraform apply`.
-
 > [!WARNING]
 > **Azure Quota and Model Availability**
-> The models deployed (`model-router`, `GPT-4o`, `FLUX.2-pro`, `FLUX.1-Kontext-pro`, `Sora`) require GPU capacity and are subject to Azure quotas.
->
-> **If you encounter deployment errors related to "Insufficient Quota"**, request a quota increase: [Azure Support](https://portal.azure.com/#blade/Microsoft_Azure_Support/HelpAndSupportBlade/newsupportrequest)
->
-> **Multi-Region Deployment**: Sweden Central hosts 4 models, East US hosts 1 model. All models use **GlobalStandard** SKU for optimal performance and availability.
+> The models deployed (`model-router`, `GPT-4o`, `FLUX.2-pro`, `FLUX.1-Kontext-pro`, `Sora`) require GPU capacity and are subject to Azure quotas. **If you encounter deployment errors related to "Insufficient Quota"**, request a quota increase: [Azure Support](https://portal.azure.com/#blade/Microsoft_Azure_Support/HelpAndSupportBlade/newsupportrequest)
+
+
 
 ## Architecture
 
@@ -138,8 +138,8 @@ graph TD
 
 **Multi-Region Agent Distribution:**
 
-- **Sweden Central**: Orchestrator, Cropping Specialist, Video Agent, Document Processor
-- **East US**: Visual Content Specialist (backgrounds + thumbnails)
+> - **Sweden Central**: Orchestrator, Cropping Specialist, Video Agent, Document Processor
+> - **East US**: Visual Content Specialist (backgrounds + thumbnails)
 
 ## What Happens Under the Hood?
 
