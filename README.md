@@ -59,9 +59,9 @@ Last updated: 2026-01-08
 - **5-Agent Architecture**: Specialized AI agents with intelligent task delegation:
   - **Main Orchestrator** (Sweden): Central request router (`model-router`) with 18-model intelligent routing
   - **Cropping Specialist** (Sweden): Smart object detection and cropping (`GPT-4o vision`)
-  - **Visual Content Specialist** (East US): Background removal/replacement + thumbnail generation (`FLUX.2-pro`)
   - **Video Processing Agent** (Sweden): Native video generation with `Sora`
   - **Document Processor** (Sweden): PDF/document analysis and extraction (`FLUX.1-Kontext-pro`)
+  - **Visual Content Specialist** (East US): Background removal/replacement + thumbnail generation (`FLUX.2-pro`)
 - **Real-Time Image Processing**: Upload or paste images directly into the chat for immediate agent action
 - **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents across multiple projects
 - **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle
@@ -114,7 +114,6 @@ Last updated: 2026-01-08
 > [!WARNING]
 > **Azure Quota and Model Availability**
 > The models deployed (`model-router`, `GPT-4o`, `FLUX.2-pro`, `FLUX.1-Kontext-pro`, `Sora`) require GPU capacity and are subject to Azure quotas. **If you encounter deployment errors related to "Insufficient Quota"**, request a quota increase: [Azure Support](https://portal.azure.com/#blade/Microsoft_Azure_Support/HelpAndSupportBlade/newsupportrequest)
-
 
 
 ## Architecture
@@ -187,6 +186,8 @@ graph TD
    - The Terraform output will provide the `application_url`
    - Visit `https://<your-app-name>.azurewebsites.net`
    - You should see the Zava Media AI interface
+    
+       https://github.com/user-attachments/assets/9422d50b-a2ca-4ae4-bf01-ab3090d60313
 
 2. **Verify Agent Architecture**:
    - Go to the [MSFT Foundry Portal](https://ai.azure.com)
