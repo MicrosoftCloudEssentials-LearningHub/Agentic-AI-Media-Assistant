@@ -3,7 +3,7 @@
 [![GitHub](https://img.shields.io/badge/--181717?logo=github&logoColor=ffffff)](https://github.com/)
 [brown9804](https://github.com/brown9804)
 
-Last updated: 2026-01-08
+Last updated: 2026-01-07
 
 ----------
 
@@ -72,22 +72,28 @@ Last updated: 2026-01-08
 
 > Each agent uses a specialized model as its "brain" optimized for its domain:
 
-**Sweden Central (4 models):**
+**Sweden Central (4):**
 
 - **Model Router** (Orchestrator): Azure OpenAI Model Router (2025-11-18) ~ Intelligent routing across 18 models, `routes requests to optimal model among 18 options`. Click here to read more about it [Use model router for Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/model-router?view=foundry-classic)
 - **GPT-4o** (Cropping Agent): Vision and image understanding capabilities. ~ `Vision-based object detection and cropping coordination`
 - **Sora** (Video Agent): Native video generation from text prompts `with smooth, realistic motion`
 - **FLUX.1-Kontext-pro** (Document Agent): Contextual understanding and PDF/document processing. ~ `Extracts text, analyzes PDFs, understands document context`
 
-**East US (1 model):**
+    > For example:
+    
+    | Models | Agents | 
+    | --- | ---- | 
+    | <img width="1891" height="417" alt="image" src="" /> | <img width="1892" height="478" alt="image" src="" /> | 
+
+**East US (1):**
 
 - **FLUX.2-pro** (Visual Content Agent): Advanced artistic image generation, background manipulation, and thumbnail creation. ~ `Consolidated agent for backgrounds, thumbnails, and artistic image generation with low latency`
-
-> For example:
-
-| Model | Agent | 
-| --- | ---- | 
-| <img width="1891" height="417" alt="image" src="https://github.com/user-attachments/assets/edee7ca9-5148-4ee0-b461-1b8960550226" /> | <img width="1892" height="478" alt="image" src="https://github.com/user-attachments/assets/77cab91f-85da-4c57-846a-477efbd82f9c" /> | 
+    
+    > For example:
+    
+    | Models | Agents | 
+    | --- | ---- | 
+    | <img width="1891" height="417" alt="image" src="https://github.com/user-attachments/assets/edee7ca9-5148-4ee0-b461-1b8960550226" /> | <img width="1892" height="478" alt="image" src="https://github.com/user-attachments/assets/77cab91f-85da-4c57-846a-477efbd82f9c" /> | 
 
 > **How They Work Together?**
 >
