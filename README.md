@@ -46,7 +46,8 @@ Last updated: 2026-01-08
 ## Key Features
 
 > [!WARNING]
-> **Multi-Region Deployment**: Sweden Central hosts 4 models + 2 agents, East US hosts 1 model. All models use **GlobalStandard** SKU for optimal performance and availability.
+> - **Multi-Region Deployment**: Sweden Central hosts 4 models + 2 agents, East US hosts 1 model.
+> - All models use **GlobalStandard** SKU for optimal performance and availability.
 
 > For example East US \& Sweden Central:
 
@@ -75,16 +76,17 @@ Last updated: 2026-01-08
 
 ## Architecture Overview
 
-### Azure AI Agents (2 Total - Sweden Central)
+`Azure AI Agents (2 Total - Sweden Central)`:
 
-> **Important**: Agents use CHAT models only (not image generation models). GPT-4o is a **chat model with vision** - it can see/analyze images in conversation but doesn't generate images.
+> [!IMPORTANT]
+> Agents use CHAT models only (not image generation models). GPT-4o is a **chat model with vision**, `it can see/analyze images in conversation but doesn't generate images.`
 
 **Sweden Central Agents:**
 
-- **zava-media-orchestrator**: Uses Model Router (2025-11-18) - a chat model that routes to 18+ other models
-- **vision-analyst**: Uses GPT-4o (2024-08-06) - a **chat model with vision**. Analyzes images to detect objects and return bounding box coordinates as JSON. Application code handles actual image manipulation (cropping, resizing, etc.) using the provided coordinates.
+- **zava-media-orchestrator**: Uses Model Router (2025-11-18), `a chat model that routes to 18+ other models`
+- **vision-analyst**: Uses GPT-4o (2024-08-06), a `chat model with vision`. Analyzes images to detect objects and return bounding box coordinates as JSON. Application code handles actual image manipulation (cropping, resizing, etc.) using the provided coordinates.
 
-### Code-Based Orchestration (Direct Model Calls)
+`Code-Based Orchestration (Direct Model Calls)`:
 
 **Sweden Central Models (Code Orchestration):**
 - **Sora**: Video generation model (not used by agents, called directly via code)
@@ -105,29 +107,9 @@ Last updated: 2026-01-08
 >    - **Code = Generation Models** (Sora, FLUX) for creating videos/images
 >    - GPT-4o is a CHAT model that can see images, NOT an image generation model
 
-**Benefits of Hybrid Architecture:**
-
-> - **Chat Models for Agents**: Model-router and GPT-4o are conversational (agents work with chat models in new SDK)
-> - **GPT-4o Vision**: Can analyze images users upload, but doesn't generate images
-> - **Generation via Code**: Sora and FLUX models called directly for video/image creation
-> - **Cost Efficient**: Use agents for conversation/analysis, direct calls for generation
-> - **SDK Compliance**: Agents only use chat models per Azure AI Agents SDK design
-
-**Deployed Models:**
-
-**Sweden Central:**
-- **model-router** (2025-11-18) - Chat model → `zava-media-orchestrator` agent
-- **GPT-4o** (2024-08-06) - Chat model with vision → `vision-analyst` agent (coordinate detection)
-- **Sora** - Video generation model → Code orchestration (not an agent)
-- **FLUX.1-Kontext-pro** - Image generation model → Code orchestration (not an agent)
-
-**East US:**
-- **FLUX.2-pro** - Image generation model → Code orchestration (not an agent)
-
 > [!WARNING]
 > **Azure Quota and Model Availability**
 > The models deployed (`model-router`, `GPT-4o`, `FLUX.2-pro`, `FLUX.1-Kontext-pro`, `Sora`) require GPU capacity and are subject to Azure quotas. **If you encounter deployment errors related to "Insufficient Quota"**, request a quota increase: [Azure Support](https://portal.azure.com/#blade/Microsoft_Azure_Support/HelpAndSupportBlade/newsupportrequest)
-
 
 ## Architecture
 
@@ -160,8 +142,7 @@ graph TD
     end
 ```
 
-**Architecture Distribution:**
-
+> **Architecture Distribution:**
 > - **2 Azure AI Agents (Sweden Central)**: `zava-media-orchestrator` (model-router), `vision-analyst` (GPT-4o)
 > - **Generation Models**: Sora, FLUX.1-Kontext-pro (Sweden Central), FLUX.2-pro (East US)
 > - **Key**: Agents only use chat models per Azure AI Agents SDK design
@@ -224,6 +205,14 @@ graph TD
    - **Multi-Step**: "Crop the car, put it on a race track background, and add the text 'SPEED' in red"
    - **Video**: "Generate a 5-second video of a sunset over mountains" (Sweden Central - Sora)
    - **Document**: "Extract all text from this PDF" or "Summarize this document" (Sweden Central - FLUX.1-Kontext-pro)
+
+> [!NOTE]
+> **Benefits of Hybrid Architecture:** <br/>
+> - **Chat Models for Agents**: Model-router and GPT-4o are conversational (agents work with chat models in new SDK)
+> - **GPT-4o Vision**: Can analyze images users upload, but doesn't generate images
+> - **Generation via Code**: Sora and FLUX models called directly for video/image creation
+> - **Cost Efficient**: Use agents for conversation/analysis, direct calls for generation
+> - **SDK Compliance**: Agents only use chat models per Azure AI Agents SDK design
 
 <!-- START BADGE -->
 <div align="center">
