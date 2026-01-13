@@ -63,11 +63,11 @@ Last updated: 2026-01-08
   - **East US**: 1 model (no agents)
     - **Models**: FLUX.2-pro
 - **2 Azure AI Agents** (chat-based via Responses API):
-  - **`zava-media-orchestrator`**: Central request router using `model-router` chat model
-  - **`vision-analyst`**: Object detection and coordinate analysis using `GPT-4o` chat model with vision (provides JSON coordinates via HTTPS)
+  - **`zava-media-orchestrator`**: Central request router using `model-router` chat model. `Routes to 18+ other models`
+  - **`vision-analyst`**: Object detection and coordinate analysis using `GPT-4o` chat model with vision (provides JSON coordinates via HTTPS). ~ `Analyzes images to detect objects and return bounding box coordinates as JSON. Application code handles actual image manipulation (cropping, resizing, etc.) using the provided coordinates.`
 - **Code-Based Orchestration** for generation tasks:
-  - **Video Generation**: Direct calls to `Sora` (Sweden Central)
-  - **Image Generation**: Direct calls to `FLUX.1-Kontext-pro` (Sweden Central) and `FLUX.2-pro` (East US)
+  - **Video Generation**: Direct calls to `Sora` (Sweden Central). ~ `Video generation model (not used by agents, called directly via code)`
+  - **Image Generation**: Direct calls to `FLUX.1-Kontext-pro` (Sweden Central) ~ `Image generation model (not used by agents, called directly via code)` and `FLUX.2-pro` (East US) ~ `Image generation model (not used by agents, called directly via code)`.
 - **Real-Time Image Processing**: Upload or paste images directly into the chat for immediate agent action
 - **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents across multiple projects
 - **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle
@@ -76,24 +76,8 @@ Last updated: 2026-01-08
 
 ## Architecture Overview
 
-`Azure AI Agents (2 Total - Sweden Central)`:
-
 > [!IMPORTANT]
 > Agents use CHAT models only (not image generation models). GPT-4o is a **chat model with vision**, `it can see/analyze images in conversation but doesn't generate images.`
-
-**Sweden Central Agents:**
-
-- **zava-media-orchestrator**: Uses Model Router (2025-11-18), `a chat model that routes to 18+ other models`
-- **vision-analyst**: Uses GPT-4o (2024-08-06), a `chat model with vision`. Analyzes images to detect objects and return bounding box coordinates as JSON. Application code handles actual image manipulation (cropping, resizing, etc.) using the provided coordinates.
-
-`Code-Based Orchestration (Direct Model Calls)`:
-
-**Sweden Central Models (Code Orchestration):**
-- **Sora**: Video generation model (not used by agents, called directly via code)
-- **FLUX.1-Kontext-pro**: Image generation model (not used by agents, called directly via code)
-
-**East US Models (Code Orchestration):**
-- **FLUX.2-pro**: Image generation model (not used by agents, called directly via code)
 
 > **How It Works:**
 >
@@ -145,7 +129,7 @@ graph TD
 > **Architecture Distribution:**
 > - **2 Azure AI Agents (Sweden Central)**: `zava-media-orchestrator` (model-router), `vision-analyst` (GPT-4o)
 > - **Generation Models**: Sora, FLUX.1-Kontext-pro (Sweden Central), FLUX.2-pro (East US)
-> - **Key**: Agents only use chat models per Azure AI Agents SDK design
+> - **Key**: As now, Agents use chat models per Azure AI Agents SDK design
 
 ## What Happens Under the Hood?
 
@@ -205,14 +189,6 @@ graph TD
    - **Multi-Step**: "Crop the car, put it on a race track background, and add the text 'SPEED' in red"
    - **Video**: "Generate a 5-second video of a sunset over mountains" (Sweden Central - Sora)
    - **Document**: "Extract all text from this PDF" or "Summarize this document" (Sweden Central - FLUX.1-Kontext-pro)
-
-> [!NOTE]
-> **Benefits of Hybrid Architecture:** <br/>
-> - **Chat Models for Agents**: Model-router and GPT-4o are conversational (agents work with chat models in new SDK)
-> - **GPT-4o Vision**: Can analyze images users upload, but doesn't generate images
-> - **Generation via Code**: Sora and FLUX models called directly for video/image creation
-> - **Cost Efficient**: Use agents for conversation/analysis, direct calls for generation
-> - **SDK Compliance**: Agents only use chat models per Azure AI Agents SDK design
 
 <!-- START BADGE -->
 <div align="center">
