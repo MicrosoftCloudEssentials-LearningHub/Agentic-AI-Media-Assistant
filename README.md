@@ -46,6 +46,7 @@ Last updated: 2026-01-08
 ## Key Features
 
 > [!WARNING]
+>
 > - **Multi-Region Deployment**: Sweden Central hosts 4 models + 2 agents, East US hosts 1 model.
 > - All models use **GlobalStandard** SKU for optimal performance and availability.
 
@@ -127,6 +128,7 @@ graph TD
 ```
 
 > **Architecture Distribution:**
+>
 > - **2 Azure AI Agents (Sweden Central)**: `zava-media-orchestrator` (model-router), `vision-analyst` (GPT-4o)
 > - **Generation Models**: Sora, FLUX.1-Kontext-pro (Sweden Central), FLUX.2-pro (East US)
 > - **Key**: As now, Agents use chat models per Azure AI Agents SDK design
@@ -172,7 +174,7 @@ graph TD
    - Visit `https://<your-app-name>.azurewebsites.net`
    - You should see the Zava Media AI interface
     
-       https://github.com/user-attachments/assets/9422d50b-a2ca-4ae4-bf01-ab3090d60313
+       <https://github.com/user-attachments/assets/9422d50b-a2ca-4ae4-bf01-ab3090d60313>
 
 2. **Verify Agent Architecture**:
    - Go to the [MSFT Foundry Portal](https://ai.azure.com)
