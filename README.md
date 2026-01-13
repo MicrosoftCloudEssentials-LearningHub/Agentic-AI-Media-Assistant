@@ -1,5 +1,7 @@
 # Demo: Zava Media AI Assistant <br/> Multi-Agent Architecture <br/> for Image & Video Processing - Overview 
 
+Costa Rica 
+
 [![GitHub](https://img.shields.io/badge/--181717?logo=github&logoColor=ffffff)](https://github.com/)
 [brown9804](https://github.com/brown9804)
 
@@ -28,7 +30,7 @@ Last updated: 2026-01-08
 </details>
 
 > [!IMPORTANT]
-> Disclaimer: This repository contains a demo of `Zava Media AI Assistant`, a multi-agent system implementing Agent-to-Agent (A2A) protocol for automated media generation and manipulation. It features a fully automated `"Zero-Touch" deployment` pipeline orchestrated by Terraform, which `provisions infrastructure, creates specialized AI agents for image/video tasks in MSFT Foundry, and deploys the complete A2A application stack.` Feel free to modify this as needed, it's just a reference. Please refer [TechWorkshop L300: AI Apps and Agents](https://microsoft.github.io/TechWorkshop-L300-AI-Apps-and-agents/), and if needed contact Microsoft directly: [Microsoft Sales and Support](https://support.microsoft.com/contactus?ContactUsExperienceEntryPointAssetId=S.HP.SMC-HOME) for more guidance.
+> Disclaimer: This repository contains a demo of `Zava Media AI Assistant`, a hybrid system using **2 Azure AI Agents** (via Azure AI Agents Service) for conversational orchestration and cropping, with **code-based orchestration** for other media tasks (video, image generation, document processing). It features a fully automated `"Zero-Touch" deployment` pipeline orchestrated by Terraform, which `provisions infrastructure, creates specialized AI agents in MSFT Foundry, and deploys the complete application stack.` Feel free to modify this as needed, it's just a reference. Please refer [TechWorkshop L300: AI Apps and Agents](https://microsoft.github.io/TechWorkshop-L300-AI-Apps-and-agents/), and if needed contact Microsoft directly: [Microsoft Sales and Support](https://support.microsoft.com/contactus?ContactUsExperienceEntryPointAssetId=S.HP.SMC-HOME) for more guidance.
 
 > E.g
 
@@ -44,7 +46,7 @@ Last updated: 2026-01-08
 ## Key Features
 
 > [!WARNING]
-> **Multi-Region Deployment**: Sweden Central hosts 4 models, East US hosts 1 model. All models use **GlobalStandard** SKU for optimal performance and availability.
+> **Multi-Region Deployment**: Sweden Central hosts 4 models + 2 agents, East US hosts 1 model. All models use **GlobalStandard** SKU for optimal performance and availability.
 
 > For example East US \& Sweden Central:
 
@@ -52,64 +54,75 @@ Last updated: 2026-01-08
 | --- | ---- | 
 | <img width="1891" height="417" alt="image" src="https://github.com/user-attachments/assets/edee7ca9-5148-4ee0-b461-1b8960550226" /> | <img width="1892" height="478" alt="image" src="https://github.com/user-attachments/assets/92d00545-757a-462a-8bba-a42a1cbc5eff" /> | 
 
-- **Media-Centric AI Processing**: Specialized agents for image, video, and document manipulation workflows
-- **Multi-Region Architecture**: 2 Azure AI Foundry projects across 2 regions for optimal performance:
-  - **Sweden Central** (Primary): 4 agents + 4 models (orchestration, cropping, video, documents)
-  - **East US** (Secondary): 1 agent + 1 model (visual content generation with low latency)
-- **5-Agent Architecture**: Specialized AI agents with intelligent task delegation:
-  - **Main Orchestrator** (Sweden): Central request router (`model-router`) with 18-model intelligent routing
-  - **Cropping Specialist** (Sweden): Smart object detection and cropping (`GPT-4o vision`)
-  - **Video Processing Agent** (Sweden): Native video generation with `Sora`
-  - **Document Processor** (Sweden): PDF/document analysis and extraction (`FLUX.1-Kontext-pro`)
-  - **Visual Content Specialist** (East US): Background removal/replacement + thumbnail generation (`FLUX.2-pro`)
+- **Hybrid Agent Architecture**: 2 Azure AI Agents for chat-based orchestration + code-based orchestration for media processing
+- **Multi-Region Deployment**: 
+  - **Sweden Central**: 4 models + 2 agents
+    - **Models**: model-router, GPT-4o, Sora, FLUX.1-Kontext-pro
+    - **Agents**: `zava-media-orchestrator`, `vision-analyst`
+  - **East US**: 1 model (no agents)
+    - **Models**: FLUX.2-pro
+- **2 Azure AI Agents** (chat-based via Responses API):
+  - **`zava-media-orchestrator`**: Central request router using `model-router` chat model
+  - **`vision-analyst`**: Object detection and coordinate analysis using `GPT-4o` chat model with vision (provides JSON coordinates via HTTPS)
+- **Code-Based Orchestration** for generation tasks:
+  - **Video Generation**: Direct calls to `Sora` (Sweden Central)
+  - **Image Generation**: Direct calls to `FLUX.1-Kontext-pro` (Sweden Central) and `FLUX.2-pro` (East US)
 - **Real-Time Image Processing**: Upload or paste images directly into the chat for immediate agent action
 - **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents across multiple projects
 - **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle
 - **Advanced Task Coordination**: Inter-agent task delegation (e.g., "Crop this, then change background, then add text")
 - **Dynamic Configuration**: All settings managed via [terraform.tfvars](./terraform-infrastructure/terraform.tfvars) - `no code changes needed, just add your values here`
 
-## Specialized Agents (SMEs) (5 Total)
+## Architecture Overview
 
-> Each agent uses a specialized model as its "brain" optimized for its domain:
+### Azure AI Agents (2 Total - Sweden Central)
 
-**Sweden Central (4):**
+> **Important**: Agents use CHAT models only (not image generation models). GPT-4o is a **chat model with vision** - it can see/analyze images in conversation but doesn't generate images.
 
-- **Model Router** (Orchestrator): Azure OpenAI Model Router (2025-11-18) ~ Intelligent routing across 18 models, `routes requests to optimal model among 18 options`. Click here to read more about it [Use model router for Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/model-router?view=foundry-classic)
-- **GPT-4o** (Cropping Agent): Vision and image understanding capabilities. ~ `Vision-based object detection and cropping coordination`
-- **Sora** (Video Agent): Native video generation from text prompts `with smooth, realistic motion`
-- **FLUX.1-Kontext-pro** (Document Agent): Contextual understanding and PDF/document processing. ~ `Extracts text, analyzes PDFs, understands document context`
+**Sweden Central Agents:**
 
-    > For example:
-    
-    | Models | Agents | 
-    | --- | ---- | 
-    | <img width="1891" height="417" alt="image" src="https://github.com/user-attachments/assets/c5d882da-d189-47ff-a4c4-2476d33c19b7" /> | <img width="1892" height="478" alt="image" src="" /> | 
+- **zava-media-orchestrator**: Uses Model Router (2025-11-18) - a chat model that routes to 18+ other models
+- **vision-analyst**: Uses GPT-4o (2024-08-06) - a **chat model with vision**. Analyzes images to detect objects and return bounding box coordinates as JSON. Application code handles actual image manipulation (cropping, resizing, etc.) using the provided coordinates.
 
-**East US (1):**
+### Code-Based Orchestration (Direct Model Calls)
 
-- **FLUX.2-pro** (Visual Content Agent): Advanced artistic image generation, background manipulation, and thumbnail creation. ~ `Consolidated agent for backgrounds, thumbnails, and artistic image generation with low latency`
-    
-    > For example:
-    
-    | Models | Agents | 
-    | --- | ---- | 
-    | <img width="1891" height="417" alt="image" src="https://github.com/user-attachments/assets/edee7ca9-5148-4ee0-b461-1b8960550226" /> | <img width="1892" height="478" alt="image" src="https://github.com/user-attachments/assets/77cab91f-85da-4c57-846a-477efbd82f9c" /> | 
+**Sweden Central Models (Code Orchestration):**
+- **Sora**: Video generation model (not used by agents, called directly via code)
+- **FLUX.1-Kontext-pro**: Image generation model (not used by agents, called directly via code)
 
-> **How They Work Together?**
+**East US Models (Code Orchestration):**
+- **FLUX.2-pro**: Image generation model (not used by agents, called directly via code)
+
+> **How It Works:**
 >
-> 1. **Orchestrator** (Sweden - model-router) receives all requests and routes to appropriate specialist
-> 2. **Cropping Agent** (Sweden - GPT-4o) uses vision to identify and crop objects
-> 3. **Visual Content Specialist** (East US - FLUX.2-pro) handles backgrounds and thumbnails with co-located model for fast generation
-> 4. **Video Agent** (Sweden - Sora) creates smooth, high-quality videos from text descriptions
-> 5. **Document Agent** (Sweden - FLUX.1-Kontext-pro) processes PDFs and extracts structured information
+> 1. **Orchestrator Agent** (model-router - chat model) receives user requests and routes appropriately
+> 2. **Vision Analyst Agent** (GPT-4o - chat model with vision) can SEE images in chat and provide object detection coordinates via JSON
+> 3. **Code Orchestration** calls generation models directly:
+>    - Video generation (Sora - not an agent, direct API call)
+>    - Image generation (FLUX.1-Kontext-pro - not an agent, direct API call)
+> 4. **Key Distinction**: 
+>    - **Agents = Chat Models** (model-router, GPT-4o) for conversation and analysis
+>    - **Code = Generation Models** (Sora, FLUX) for creating videos/images
+>    - GPT-4o is a CHAT model that can see images, NOT an image generation model
 
-**Benefits of Multi-Region Architecture:**
+**Benefits of Hybrid Architecture:**
 
-> - **Specialized models per domain**: Each model excels at its specific task (vision, generation, video, documents)
-> - **Optimized latency**: Visual content generation co-located with FLUX.2-pro in East US for fast image operations
-> - **Geographic distribution**: Primary processing in Sweden Central, intensive image generation in East US
-> - **Intelligent routing**: Model Router automatically selects best model for each request
-> - **Consolidated workflows**: Visual Content Specialist handles multiple related tasks (backgrounds + thumbnails) efficiently
+> - **Chat Models for Agents**: Model-router and GPT-4o are conversational (agents work with chat models in new SDK)
+> - **GPT-4o Vision**: Can analyze images users upload, but doesn't generate images
+> - **Generation via Code**: Sora and FLUX models called directly for video/image creation
+> - **Cost Efficient**: Use agents for conversation/analysis, direct calls for generation
+> - **SDK Compliance**: Agents only use chat models per Azure AI Agents SDK design
+
+**Deployed Models:**
+
+**Sweden Central:**
+- **model-router** (2025-11-18) - Chat model → `zava-media-orchestrator` agent
+- **GPT-4o** (2024-08-06) - Chat model with vision → `vision-analyst` agent (coordinate detection)
+- **Sora** - Video generation model → Code orchestration (not an agent)
+- **FLUX.1-Kontext-pro** - Image generation model → Code orchestration (not an agent)
+
+**East US:**
+- **FLUX.2-pro** - Image generation model → Code orchestration (not an agent)
 
 > [!WARNING]
 > **Azure Quota and Model Availability**
@@ -122,29 +135,36 @@ Last updated: 2026-01-08
 graph TD
     User[User] <--> UI[Media Studio UI]
     UI <--> App[FastAPI Application]
-    App <--> Orchestrator[Main Orchestrator<br/>Model Router<br/>Sweden Central]
     
-    Orchestrator <--> Crop[Cropping Agent<br/>GPT-4o<br/>Sweden Central]
-    Orchestrator <--> Visual[Visual Content Specialist<br/>FLUX.2-pro<br/>East US]
-    Orchestrator <--> Video[Video Agent<br/>Sora<br/>Sweden Central]
-    Orchestrator <--> Doc[Document Agent<br/>FLUX.1-Kontext-pro<br/>Sweden Central]
+    App <--> Orchestrator[zava-media-orchestrator<br/>Model Router Chat Model<br/>Sweden Central]
+    App <--> Vision[vision-analyst<br/>GPT-4o Chat + Vision<br/>Object Detection & Coordinates<br/>Sweden Central]
     
-    subgraph "Sweden Central Project"
+    App <--> CodeOrch[Code-Based Orchestration]
+    
+    CodeOrch --> Sora[Sora<br/>Video Generation<br/>Sweden Central]
+    CodeOrch --> FLUX1[FLUX.1-Kontext-pro<br/>Image Generation<br/>Sweden Central]
+    CodeOrch --> FLUX2[FLUX.2-pro<br/>Image Generation<br/>East US]
+    
+    subgraph "Azure AI Agents - Chat Models Only"
         Orchestrator
-        Crop
-        Video
-        Doc
+        Vision
     end
     
-    subgraph "East US Project"
-        Visual
+    subgraph "Sweden Central - Generation Models"
+        Sora
+        FLUX1
+    end
+    
+    subgraph "East US - Generation Models"
+        FLUX2
     end
 ```
 
-**Multi-Region Agent Distribution:**
+**Architecture Distribution:**
 
-> - **Sweden Central**: Orchestrator, Cropping Specialist, Video Agent, Document Processor
-> - **East US**: Visual Content Specialist (backgrounds + thumbnails)
+> - **2 Azure AI Agents (Sweden Central)**: `zava-media-orchestrator` (model-router), `vision-analyst` (GPT-4o)
+> - **Generation Models**: Sora, FLUX.1-Kontext-pro (Sweden Central), FLUX.2-pro (East US)
+> - **Key**: Agents only use chat models per Azure AI Agents SDK design
 
 ## What Happens Under the Hood?
 
@@ -166,9 +186,9 @@ graph TD
 2. **Automated Agent Creation**:
    - **Fully automated by Terraform**: No manual intervention required
    - Installs the `azure-ai-projects` SDK and connects to MSFT Foundry projects in both regions
-   - Creates specialized media processing agents with region-specific model assignments:
-     - **Sweden Central**: Orchestrator, Cropping Specialist, Video Agent, Document Processor
-     - **East US**: Visual Content Specialist
+   - Creates specialized media processing agents:
+     - **Sweden Central**: `zava-media-orchestrator`, `vision-analyst`
+     - **East US**: No agents (Models accessed directly via code)
    - Automatically stores agent IDs in Azure Key Vault for secure access with region prefixes
    - Web app retrieves agent configuration from Key Vault automatically
    - **Zero manual configuration** - Terraform handles all multi-region agent deployment and setup
@@ -192,9 +212,9 @@ graph TD
 2. **Verify Agent Architecture**:
    - Go to the [MSFT Foundry Portal](https://ai.azure.com)
    - Check **Sweden Central Project** -> **Build** -> **Agents**:
-     - Should see: Orchestrator, Cropping Specialist, Video Agent, Document Processor (4 agents)
-   - Check **East US Project** -> **Build** -> **Agents**:
-     - Should see: Visual Content Specialist (1 agent)
+     - Should see: `zava-media-orchestrator` and `vision-analyst`
+   - Check **East US Project**:
+     - Note: No agents are created in East US. The FLUX.2-pro model is accessed directly via code.
    - **Agent IDs are automatically stored in Azure Key Vault** with region prefixes and retrieved by the web app
 
 3. **Test Media Processing**: For example:

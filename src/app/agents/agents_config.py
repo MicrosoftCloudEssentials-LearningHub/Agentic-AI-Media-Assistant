@@ -14,16 +14,25 @@ def _read(name: str) -> str:
     return ""
 
 # Define instructions directly here for simplicity, or read from files if preferred
-ORCHESTRATOR_PROMPT = _read("OrchestratorPrompt.txt") or """You are the Zava Media Orchestrator. Your job is to analyze user requests related to image and video processing and route them to the appropriate specialist agent.
-- If the user wants to crop an image or object, delegate to the "cropping_agent".
-- If the user wants to change the background, delegate to the "background_agent".
-- If the user wants to create a new thumbnail or image, delegate to the "thumbnail_generator".
-- If the user wants to create a video, delegate to the "video_agent".
-- For general questions, answer them yourself.
-"""
+ORCHESTRATOR_PROMPT = _read("OrchestratorPrompt.txt") or """You are the Zava Media Orchestrator. Your job is to analyze user requests related to image, video, and document processing and route them to the appropriate specialist agent.
 
-CROPPING_PROMPT = _read("CroppingAgentPrompt.txt") or """You are the Cropping Specialist. Your task is to identify objects in images and provide cropping coordinates or cropped images.
-You use advanced vision models to detect subjects.
+ROUTING RULES:
+- If the user wants to analyze images, detect objects, or get object coordinates, delegate to the "cropping_agent" (Vision Analyst).
+- If the user wants to change backgrounds, create thumbnails, or generate images, delegate to the "visual_content_agent".
+- If the user wants to create a video, delegate to the "video_agent".
+- If the user wants to process, extract, or analyze documents/PDFs, delegate to the "document_agent".
+- For general questions, answer them yourself.
+
+SPECIALIST AGENTS:
+- cropping_agent: Vision Analyst using GPT-4o for object detection and coordinate analysis (Sweden Central)
+- visual_content_agent: Uses FLUX.2-pro for backgrounds, thumbnails, and image generation (East US)
+- video_agent: Uses Sora for video generation (Sweden Central)
+- document_agent: Uses FLUX.1-Kontext-pro for document processing (Sweden Central)
+
+Always route to the most appropriate specialist for optimal performance."""
+
+CROPPING_PROMPT = _read("CroppingAgentPrompt.txt") or """You are the Vision Analyst. Your task is to analyze images and provide object detection coordinates.
+You use GPT-4o vision to identify objects and return precise bounding boxes as JSON. Application code handles actual image manipulation.
 """
 
 BACKGROUND_PROMPT = _read("BackgroundAgentPrompt.txt") or """You are the Background Specialist. Your task is to remove or replace backgrounds in images.
@@ -41,8 +50,12 @@ You use advanced video generation models like Sora to bring ideas to life.
 AGENT_INSTRUCTIONS = {
     "orchestrator": ORCHESTRATOR_PROMPT,
     "cropping_agent": CROPPING_PROMPT,
-    "background_agent": BACKGROUND_PROMPT,
-    "thumbnail_generator": THUMBNAIL_PROMPT,
-    "video_agent": VIDEO_PROMPT
+    "visual_content_agent": BACKGROUND_PROMPT + " " + THUMBNAIL_PROMPT,  # Consolidated visual content agent
+    "background_agent": BACKGROUND_PROMPT,  # Legacy support
+    "thumbnail_generator": THUMBNAIL_PROMPT,  # Legacy support
+    "video_agent": VIDEO_PROMPT,
+    "document_agent": """You are the Document Processor. Your task is to analyze, extract, and generate content from documents including PDFs, images with text, and structured documents. 
+You can extract text, understand layout, generate document summaries, and create visual representations of document content. 
+You excel at contextual understanding of documents and can help with document-to-image conversion, text extraction, and document enhancement."""
 }
 

@@ -45,8 +45,7 @@ variable "agent_model_assignments" {
   default = {
     orchestrator         = "model-router"
     cropping_agent       = "gpt-4o"
-    background_agent     = "FLUX.2-pro"
-    thumbnail_generator  = "FLUX.2-pro"  # DALL-E 3 quota exhausted, using FLUX.2-pro
+    visual_content_agent = "FLUX.2-pro"
     video_agent          = "sora"
     document_agent       = "FLUX.1-Kontext-pro"
   }
@@ -57,7 +56,7 @@ variable "agent_region_assignments" {
   description = "Map of regions to list of agents to deploy in that region"
   default = {
     swedencentral = ["orchestrator", "cropping_agent", "video_agent", "document_agent"]
-    eastus        = ["background_agent", "thumbnail_generator"]
+    eastus        = ["visual_content_agent"]
   }
 }
 

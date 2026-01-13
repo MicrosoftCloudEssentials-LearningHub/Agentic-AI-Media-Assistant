@@ -197,17 +197,21 @@ class ImageService:
             client = self._get_client_for_model(self.sora_model)
             
             if not client:
+                logger.error("Sora client not configured")
+                logger.error(f"Sora endpoint: {self.model_endpoints.get(self.sora_model)}")
+                logger.error(f"Sora key configured: {bool(self.model_keys.get(self.sora_model))}")
                 return {
                     "success": False,
-                    "message": "Sora client not configured. Check AZURE_OPENAI_ENDPOINT_SORA and credentials.",
+                    "message": "Sora client not configured. Check AZURE_OPENAI_ENDPOINT_SORA and ensure Sora is deployed in your Azure AI Foundry.",
                     "video_url": None
                 }
             
             # Generate video with Sora
             logger.info(f"Generating video with Sora: {prompt[:100]}...")
+            logger.info(f"Using endpoint: {self.model_endpoints.get(self.sora_model)}")
             
             response = client.videos.generate(
-                model=self.sora_model,
+                model="sora",  # Use deployment name directly
                 prompt=prompt,
                 duration=min(duration, 6.0)  # Limit to 6 seconds
             )
@@ -324,10 +328,6 @@ class ImageService:
                 return None
 
         return self._clients[cache_key]
-                "message": f"Failed to generate image: {str(e)}",
-                "image_url": None,
-                "blob_url": None
-            }
     
     def _upload_image_to_blob(self, image_url: str, prompt: str) -> str:
         """

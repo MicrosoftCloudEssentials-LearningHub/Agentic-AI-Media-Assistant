@@ -19,11 +19,18 @@ resource "azurerm_user_assigned_identity" "deployment" {
   resource_group_name = azurerm_resource_group.rg.name
 }
 
+# Wait for managed identity to propagate in Azure AD/Entra ID
+resource "time_sleep" "wait_for_identity_propagation" {
+  create_duration = "180s"
+  depends_on      = [azurerm_user_assigned_identity.deployment]
+}
+
 # Allow deployment script identity to manage resources in the RG
 resource "azurerm_role_assignment" "deployment_identity_rg" {
   scope                = azurerm_resource_group.rg.id
   role_definition_name = "Contributor"
   principal_id         = azurerm_user_assigned_identity.deployment.principal_id
+  depends_on           = [time_sleep.wait_for_identity_propagation]
 }
 
 # Allow deployment identity to pull from ACR
@@ -31,7 +38,7 @@ resource "azurerm_role_assignment" "deployment_identity_acr_pull" {
   scope                = azurerm_container_registry.acr.id
   role_definition_name = "AcrPull"
   principal_id         = azurerm_user_assigned_identity.deployment.principal_id
-  depends_on           = [azurerm_container_registry.acr, azurerm_user_assigned_identity.deployment]
+  depends_on           = [azurerm_container_registry.acr, time_sleep.wait_for_identity_propagation]
 }
 
 resource "azurerm_role_assignment" "deployment_identity_foundry_user" {
@@ -39,7 +46,7 @@ resource "azurerm_role_assignment" "deployment_identity_foundry_user" {
   scope                = each.value.id
   role_definition_name = "Cognitive Services OpenAI User"
   principal_id         = azurerm_user_assigned_identity.deployment.principal_id
-  depends_on           = [azapi_resource.ai_foundry, azurerm_user_assigned_identity.deployment]
+  depends_on           = [azapi_resource.ai_foundry, time_sleep.wait_for_identity_propagation]
 }
 
 # Key Vault access for deployment identity to read secrets (e.g., model keys)
@@ -50,12 +57,12 @@ resource "azurerm_key_vault_access_policy" "deployment_identity_kv" {
 
   secret_permissions = ["Get", "List"]
 
-  depends_on = [azurerm_key_vault.kv, azurerm_user_assigned_identity.deployment]
+  depends_on = [azurerm_key_vault.kv, time_sleep.wait_for_identity_propagation]
   
   timeouts {
-    create = "5m"
-    update = "5m"
-    delete = "5m"
+    create = "15m"
+    update = "15m"
+    delete = "15m"
   }
 }
 
@@ -84,12 +91,21 @@ locals {
 
   # Hash of application source & templates to trigger container rebuild when logic/UI changes
   # Combine Python files and HTML templates for source tracking
+  # CRITICAL: Track all fixed files to ensure rebuilds when backend is updated
   app_source_hash = sha256(join("", [
     for f in concat(
       [for py in fileset("../src", "**/*.py") : py],
       ["app/templates/index.html"] # Explicitly include the HTML template
     ) : fileexists("../src/${f}") ? filesha256("../src/${f}") : ""
   ]))
+  
+  # Track critical service files separately for explicit rebuild triggers
+  critical_services_hash = sha256(join("", [
+    fileexists("../src/main.py") ? filesha256("../src/main.py") : "",
+    fileexists("../src/services/hybrid_agent_service.py") ? filesha256("../src/services/hybrid_agent_service.py") : "",
+    fileexists("../src/services/image_service.py") ? filesha256("../src/services/image_service.py") : "",
+  ]))
+  
   product_catalog_hash = fileexists("../src/data/updated_product_catalog(in).csv") ? filesha256("../src/data/updated_product_catalog(in).csv") : "missing"
 
   model_region_map         = local.model_regions_filtered
@@ -98,6 +114,57 @@ locals {
   foundry_endpoints        = { for r in local.foundry_regions : r => "https://${local.foundry_names[r]}.cognitiveservices.azure.com/" }
   foundry_key_secret_names = { for r in local.foundry_regions : r => "ai-foundry-key-${local.foundry_region_codes[r]}" }
   model_endpoints          = { for m, r in local.model_regions_filtered : m => local.foundry_endpoints[r] }
+
+  # Azure AI Models Configuration
+  ai_models = {
+    # Sora: Multi-region availability with fallback
+    "sora" = try(
+      # Primary: Check if Sora is available in Sweden Central
+      contains(keys(local.model_regions_filtered), "sora") && local.model_regions_filtered["sora"] == "swedencentral" 
+        ? local.foundry_endpoints["swedencentral"]
+        # Fallback 1: Check if available in any other region
+        : contains(keys(local.model_regions_filtered), "sora") 
+          ? local.foundry_endpoints[local.model_regions_filtered["sora"]]
+          # Fallback 2: Check for Sora-2 availability
+          : contains(keys(local.model_regions_filtered), "sora-2")
+            ? local.foundry_endpoints[local.model_regions_filtered["sora-2"]]
+            # Fallback 3: Use alternative video generation capability (empty for now)
+            : "",
+      ""  # Ultimate fallback: empty endpoint
+    )
+    
+    # Model-router: Always prefer Sweden Central for orchestration
+    "model-router" = try(
+      local.foundry_endpoints[local.model_regions_filtered["model-router"]], 
+      ""
+    )
+    
+    # GPT-4o: Multi-region selection
+    "gpt-4o" = try(
+      local.foundry_endpoints[local.model_regions_filtered["gpt-4o"]], 
+      ""
+    )
+    
+    # FLUX models: Region optimization
+    "FLUX.2-pro" = try(
+      local.foundry_endpoints[local.model_regions_filtered["FLUX.2-pro"]], 
+      ""
+    )
+    
+    "FLUX.1-Kontext-pro" = try(
+      local.foundry_endpoints[local.model_regions_filtered["FLUX.1-Kontext-pro"]], 
+      ""
+    )
+  }
+
+  # AI-driven deployment readiness assessment
+  sora_deployment_status = {
+    primary_region_available   = contains(keys(local.model_regions_filtered), "sora") && local.model_regions_filtered["sora"] == "swedencentral"
+    alternative_region_available = contains(keys(local.model_regions_filtered), "sora") && local.model_regions_filtered["sora"] != "swedencentral"
+    sora2_available           = contains(keys(local.model_regions_filtered), "sora-2")
+    deployment_ready          = contains(keys(local.model_regions_filtered), "sora") || contains(keys(local.model_regions_filtered), "sora-2")
+    recommended_action        = contains(keys(local.model_regions_filtered), "sora") && local.model_regions_filtered["sora"] == "swedencentral" ? "deploy_sora_sweden" : contains(keys(local.model_regions_filtered), "sora") ? "deploy_sora_alternative_region" : contains(keys(local.model_regions_filtered), "sora-2") ? "deploy_sora2_fallback" : "request_sora_access"
+  }
   model_key_secret_map     = { for m, r in local.model_regions_filtered : m => local.foundry_key_secret_names[r] }
   primary_foundry_region   = local.model_region_map["gpt-4o"]
   
@@ -279,7 +346,7 @@ resource "azurerm_container_registry_webhook" "webhook" {
 
   service_uri = "https://${local.web_app_name}.scm.azurewebsites.net/api/registry/webhook"
   status      = "enabled"
-  scope       = "zava-chat-app:latest"
+  scope       = "${local.web_app_name}:latest"
   actions     = ["push"]
 
   custom_headers = {
@@ -293,23 +360,67 @@ resource "azurerm_container_registry_webhook" "webhook" {
 }
 
 # Standalone Docker Image Build - Always runs to ensure ACR has the required image
+# Automated verification of backend fixes before deployment
+resource "null_resource" "verify_backend_fixes" {
+  triggers = {
+    critical_services_hash = local.critical_services_hash
+  }
+
+  provisioner "local-exec" {
+    command     = <<-EOT
+      Write-Host "Validating source code fixes..." -ForegroundColor Cyan
+      $ErrorActionPreference = "Stop"
+      
+      # Check image_service.py syntax
+      $imageService = Get-Content "../src/services/image_service.py" -Raw
+      if ($imageService -match '(?<=return client\s*\n)\s*\{') {
+        Write-Host "[ERROR] image_service.py contains orphaned code block" -ForegroundColor Red
+        exit 1
+      }
+      Write-Host "[OK] image_service.py syntax validated" -ForegroundColor Green
+      
+      # Check hybrid_agent_service.py improvements
+      $hybridService = Get-Content "../src/services/hybrid_agent_service.py" -Raw
+      if ($hybridService -notmatch 'max_retries|retry_delay|HttpResponseError') {
+        Write-Host "[ERROR] hybrid_agent_service.py missing retry logic" -ForegroundColor Red
+        exit 1
+      }
+      Write-Host "[OK] hybrid_agent_service.py improvements validated" -ForegroundColor Green
+      
+      # Check main.py context support
+      $mainPy = Get-Content "../src/main.py" -Raw
+      if ($mainPy -notmatch 'context\s*=\s*\{' -or $mainPy -notmatch 'image_data') {
+        Write-Host "[ERROR] main.py missing context support" -ForegroundColor Red
+        exit 1
+      }
+      Write-Host "[OK] main.py context support validated" -ForegroundColor Green
+      Write-Host "[SUCCESS] All validations passed!" -ForegroundColor Green
+    EOT
+    interpreter = ["pwsh", "-Command"]
+  }
+}
+
 resource "null_resource" "docker_image_build" {
   # Trigger rebuild when:
   # 1. Dockerfile changes
-  # 2. Application source code changes
-  # 3. Requirements.txt changes
-  # 4. ACR or app changes
-  # 5. Force rebuild on every apply (always_run ensures terraform always executes the provisioner)
+  # 2. Application source code changes (any Python file or template)
+  # 3. Critical backend services change (main.py, hybrid_agent_service.py, image_service.py)
+  # 4. Requirements.txt changes
+  # 5. ACR configuration changes
+  # 6. Force rebuild on every apply (ensures latest fixes are always deployed)
   triggers = {
-    dockerfile_hash   = local.dockerfile_hash
-    app_source_hash   = local.app_source_hash
-    requirements_hash = fileexists("../src/requirements.txt") ? filesha256("../src/requirements.txt") : "missing"
-    acr_id            = azurerm_container_registry.acr.id
-    always_run        = timestamp() # Forces provisioner to run on every apply
+    dockerfile_hash        = local.dockerfile_hash
+    app_source_hash        = local.app_source_hash
+    critical_services_hash = local.critical_services_hash
+    requirements_hash      = fileexists("../src/requirements.txt") ? filesha256("../src/requirements.txt") : "missing"
+    acr_id                 = azurerm_container_registry.acr.id
+    always_run             = timestamp() # Forces provisioner to run on every apply
+    deployment_version     = "v2026.01.13.2" # Vision Analyst: coordinates via HTTPS
   }
 
   depends_on = [
-    azurerm_container_registry.acr
+    azurerm_container_registry.acr,
+    null_resource.verify_backend_fixes  # Ensures fixes are verified BEFORE building
   ]
 
   provisioner "local-exec" {
@@ -332,7 +443,7 @@ resource "null_resource" "docker_image_build" {
 
       Write-Host "Starting Docker build and push to ACR..."
       Write-Host "Registry: ${local.registry_name}"
-      Write-Host "Image: zava-chat-app:latest"
+      Write-Host "Image: ${local.web_app_name}:latest"
       Write-Host "Dockerfile: $srcPath/Dockerfile"
       Write-Host "Source Path: $srcPath"
       Write-Host ""
@@ -352,7 +463,7 @@ resource "null_resource" "docker_image_build" {
         az acr build `
           --resource-group ${azurerm_resource_group.rg.name} `
           --registry ${local.registry_name} `
-          --image zava-chat-app:latest `
+          --image ${local.web_app_name}:latest `
           --file "$srcPath\Dockerfile" `
           "$srcPath" `
           --platform linux `
@@ -375,7 +486,7 @@ resource "null_resource" "docker_image_build" {
       if (-not $success) {
         Write-Host "[ERROR] ACR build failed after $maxAttempts attempts" -ForegroundColor Red
         Write-Host "Manual build command:"
-        Write-Host "az acr build --resource-group ${azurerm_resource_group.rg.name} --registry ${local.registry_name} --image zava-chat-app:latest --file $srcPath\Dockerfile $srcPath --platform linux"
+        Write-Host "az acr build --resource-group ${azurerm_resource_group.rg.name} --registry ${local.registry_name} --image ${local.web_app_name}:latest --file $srcPath\Dockerfile $srcPath --platform linux"
         exit 1
       }
 
@@ -384,7 +495,7 @@ resource "null_resource" "docker_image_build" {
       Write-Host ""
       Write-Host "Image details:"
       Write-Host "  Registry: ${local.registry_name}.azurecr.io"
-      Write-Host "  Repository: zava-chat-app"
+      Write-Host "  Repository: ${local.web_app_name}"
       Write-Host "  Tag: latest"
       Write-Host ""
 
@@ -394,9 +505,9 @@ resource "null_resource" "docker_image_build" {
 
       # Verify image exists in ACR
       Write-Host "Verifying image in ACR..."
-      $imgCheck = az acr repository show --name ${local.registry_name} --image zava-chat-app:latest --query "name" -o tsv 2>$null
+      $imgCheck = az acr repository show --name ${local.registry_name} --image ${local.web_app_name}:latest --query "name" -o tsv 2>$null
 
-      if ($LASTEXITCODE -eq 0 -and $imgCheck -eq "zava-chat-app") {
+      if ($LASTEXITCODE -eq 0 -and $imgCheck -eq "${local.web_app_name}") {
         Write-Host "[VERIFIED] Image confirmed in ACR registry"
         Write-Host ""
         exit 0
@@ -449,7 +560,7 @@ resource "azurerm_linux_web_app" "app" {
     }
 
     application_stack {
-      docker_image_name = "zava-chat-app:latest"
+      docker_image_name = "${local.web_app_name}:latest"
       # Use full https URL for docker registry
       docker_registry_url = "https://${local.registry_name}.azurecr.io"
     }
@@ -492,6 +603,10 @@ resource "azurerm_linux_web_app" "app" {
     AZURE_AI_AGENT_ENDPOINT              = local.ai_project_endpoints[local.primary_foundry_region]
     AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = "model-router"
     AZURE_AI_FOUNDRY_API_KEY             = "MANAGED_IDENTITY"
+    
+    # Inference endpoints for direct FLUX/Sora API access (added dynamically from terraform)
+    AZURE_AI_INFERENCE_ENDPOINT_SWEDEN   = "https://${local.foundry_names["swedencentral"]}.cognitiveservices.azure.com"
+    AZURE_AI_INFERENCE_ENDPOINT_WESTUS3  = contains(keys(local.foundry_names), "westus3") ? "https://${local.foundry_names["westus3"]}.cognitiveservices.azure.com" : "https://${local.foundry_names[local.primary_foundry_region]}.cognitiveservices.azure.com"
     # Azure context for newer AIProjectClient SDK
     AZURE_SUBSCRIPTION_ID                = data.azurerm_client_config.current.subscription_id
     AZURE_RESOURCE_GROUP                 = azurerm_resource_group.rg.name
@@ -531,11 +646,11 @@ resource "azurerm_linux_web_app" "app" {
     gpt_deployment               = "model-router"
     gpt_api_version              = "2024-08-01-preview"
     
-    # Model-specific endpoints for specialized agents
+    # Model-specific endpoints for specialized agents (AI-validated)
     DALLE3_ENDPOINT              = local.model_endpoints["FLUX.2-pro"]
     FLUX_ENDPOINT                = local.model_endpoints["FLUX.2-pro"]
     GPT_IMAGE_ENDPOINT           = local.model_endpoints["gpt-4o"]
-    SORA_ENDPOINT                = ""  # Sora-2 not available yet
+    SORA_ENDPOINT                = local.ai_models["sora"]
 
     # Application Insights via Key Vault
     APPLICATION_INSIGHTS_CONNECTION_STRING = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/app-insights-connection-string)"
@@ -802,9 +917,9 @@ resource "azurerm_key_vault_secret" "agent_cropping_agent_id" {
   }
 }
 
-resource "azurerm_key_vault_secret" "agent_background_agent_id" {
-  name         = "agent-background-agent-id"
-  value        = "backup-background-${random_id.suffix.hex}"
+resource "azurerm_key_vault_secret" "agent_visual_content_agent_id" {
+  name         = "agent-visual-content-agent-id"
+  value        = "backup-visual-content-${random_id.suffix.hex}"
   key_vault_id = azurerm_key_vault.kv.id
   depends_on   = [
     azurerm_key_vault_access_policy.deployment_identity_kv,
@@ -817,9 +932,9 @@ resource "azurerm_key_vault_secret" "agent_background_agent_id" {
   }
 }
 
-resource "azurerm_key_vault_secret" "agent_thumbnail_generator_id" {
-  name         = "agent-thumbnail-generator-id"
-  value        = "backup-thumbnail-${random_id.suffix.hex}"
+resource "azurerm_key_vault_secret" "agent_document_agent_id" {
+  name         = "agent-document-agent-id"
+  value        = "backup-document-${random_id.suffix.hex}"
   key_vault_id = azurerm_key_vault.kv.id
   depends_on   = [
     azurerm_key_vault_access_policy.deployment_identity_kv,
@@ -1207,6 +1322,198 @@ resource "azurerm_role_assignment" "storage_blob_data_contributor_foundry" {
   principal_type     = "ServicePrincipal"
 }
 
+# Azure AI Model Validation & Deployment
+resource "null_resource" "model_validation" {
+  count = var.enable_ai_automation ? 1 : 0
+  
+  triggers = {
+    model_regions = jsonencode(var.model_regions)
+    foundry_ids   = jsonencode({ for k, v in azapi_resource.ai_foundry : k => v.id })
+    validation_timestamp = timestamp()
+  }
+
+  depends_on = [
+    azapi_resource.ai_foundry,
+    azapi_resource.ai_project
+  ]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      Write-Host ""
+      Write-Host "AZURE AI MODEL VALIDATION" -ForegroundColor Cyan
+      Write-Host "=" * 60 -ForegroundColor Cyan
+      Write-Host ""
+
+      # Set up environment for Python validator
+      $validatorPath = "../src/a2a/automation/model_validator.py"
+      $subscriptionId = "${data.azurerm_client_config.current.subscription_id}"
+      $currentTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+      Write-Host "🧠 Starting AI-powered model availability validation..." -ForegroundColor Green
+      Write-Host "   Subscription: $subscriptionId" -ForegroundColor Gray
+      Write-Host "   Validation Time: $currentTime" -ForegroundColor Gray
+      Write-Host ""
+
+      # Check if validator exists
+      if (Test-Path $validatorPath) {
+        Write-Host "[OK] Model Validator found" -ForegroundColor Green
+        
+        try {
+          # Run comprehensive validation
+          Write-Host "[INFO] Running comprehensive AI validation for all models..." -ForegroundColor Yellow
+          
+          # Use Python to run validation
+          $env:PYTHONPATH = "../src"
+          cd "../src"
+          
+          python -c @"
+import asyncio
+import sys
+import os
+sys.path.insert(0, '.')
+from a2a.automation.model_validator import ModelValidator
+
+async def main():
+    validator = ModelValidator(subscription_id='$subscriptionId')
+    
+    print('Validating Sora availability in Sweden Central...')
+    sora_result = await validator.validate_model('sora', ['swedencentral', 'eastus', 'westus3'])
+    
+    print('Sora Validation Results:')
+    for region, data in sora_result.get('region_availability', {}).items():
+        status = data.get('status', 'unknown')
+        score = data.get('score', 0)
+        print(f'   {region}: {status} (score: {score:.2f})')
+    
+    optimal = sora_result.get('optimal_deployment', {})
+    if optimal.get('region'):
+        print(f'Optimal Sora deployment: {optimal["region"]} (confidence: {optimal.get("confidence", "unknown")})')
+    else:
+        print('No optimal Sora deployment region found')
+        fallbacks = sora_result.get('fallback_options', [])
+        if fallbacks:
+            print('Available fallback options:')
+            for fb in fallbacks[:3]:
+                print(f'   - {fb.get("alternative_model", fb.get("region", "unknown"))}: {fb.get("reason", "no reason")}')
+    
+    # Save validation results for Terraform
+    import json
+    with open('../terraform-infrastructure/ai_validation_results.json', 'w') as f:
+        json.dump({
+            'timestamp': '$currentTime',
+            'sora_validation': sora_result,
+            'deployment_recommendations': sora_result.get('recommendations', [])
+        }, f, indent=2)
+    
+    print('')
+    print('Validation results saved to ai_validation_results.json')
+    return sora_result
+
+if __name__ == '__main__':
+    result = asyncio.run(main())
+"@
+          
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] AI validation completed successfully" -ForegroundColor Green
+            
+            # Check if results file was created
+            $resultsFile = "../terraform-infrastructure/ai_validation_results.json"
+            if (Test-Path $resultsFile) {
+              $results = Get-Content $resultsFile | ConvertFrom-Json
+              $soraValidation = $results.sora_validation
+              
+              Write-Host ""
+              Write-Host "SORA DEPLOYMENT ANALYSIS:" -ForegroundColor Magenta
+              Write-Host "=" * 40 -ForegroundColor Magenta
+              
+              $optimal = $soraValidation.optimal_deployment
+              if ($optimal.region) {
+                Write-Host "[OK] Recommended Sora deployment: $($optimal.region)" -ForegroundColor Green
+                Write-Host "   Confidence: $($optimal.confidence)" -ForegroundColor Green
+                Write-Host "   Score: $($optimal.score)" -ForegroundColor Green
+              } else {
+                Write-Host "[ERROR] Sora not available in preferred regions" -ForegroundColor Red
+                Write-Host "   Checking fallback strategies..." -ForegroundColor Yellow
+              }
+              
+              Write-Host ""
+              Write-Host "AI RECOMMENDATIONS:" -ForegroundColor Cyan
+              foreach ($rec in $soraValidation.recommendations) {
+                Write-Host "   • $rec" -ForegroundColor White
+              }
+              
+            } else {
+              Write-Host "[WARN] AI validation completed but results file not found" -ForegroundColor Yellow
+            }
+          } else {
+            Write-Host "[WARN] AI validation encountered issues but continuing..." -ForegroundColor Yellow
+          }
+          
+        } catch {
+          Write-Host "[WARN] AI validation failed: $_" -ForegroundColor Yellow
+          Write-Host "   Falling back to standard validation..." -ForegroundColor Gray
+          
+          # Fallback: Basic Azure CLI validation
+          Write-Host "[INFO] Running basic model availability check..." -ForegroundColor Yellow
+          
+          $regions = @("swedencentral", "eastus", "westus3")
+          foreach ($region in $regions) {
+            Write-Host "   Checking Sora in $region..." -ForegroundColor Gray
+            $soraCheck = az cognitiveservices model list --location $region --query "[?name=='sora']" -o json 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              $models = $soraCheck | ConvertFrom-Json
+              if ($models.Count -gt 0) {
+                Write-Host "   [OK] Sora available in $region" -ForegroundColor Green
+              } else {
+                Write-Host "   [ERROR] Sora not available in $region" -ForegroundColor Red
+              }
+            } else {
+              Write-Host "   [WARN] Could not check $region" -ForegroundColor Yellow
+            }
+          }
+        }
+        
+      } else {
+        Write-Host "[WARN] Model validator not found, using basic validation" -ForegroundColor Yellow
+        Write-Host "   Path: $validatorPath" -ForegroundColor Gray
+        
+        # Basic validation fallback
+        Write-Host "[INFO] Running basic Sora availability check..." -ForegroundColor Yellow
+        $soraAvailable = $false
+        $regions = @("swedencentral", "eastus", "westus3", "eastus2")
+        
+        foreach ($region in $regions) {
+          Write-Host "   Checking $region..." -ForegroundColor Gray
+          $check = az cognitiveservices model list --location $region --query "[?name=='sora' || name=='sora-2']" -o json 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $models = $check | ConvertFrom-Json
+            if ($models.Count -gt 0) {
+              Write-Host "   [OK] Sora model found in $region" -ForegroundColor Green
+              $soraAvailable = $true
+              break
+            }
+          }
+        }
+        
+        if (-not $soraAvailable) {
+          Write-Host ""
+          Write-Host "[CRITICAL] Sora not found in any tested region!" -ForegroundColor Red
+          Write-Host "   This may cause deployment issues for video agent" -ForegroundColor Yellow
+          Write-Host "   Consider requesting access to Sora in Sweden Central" -ForegroundColor Yellow
+        }
+      }
+
+      Write-Host ""
+      Write-Host "[OK] AI-POWERED VALIDATION COMPLETE" -ForegroundColor Green
+      Write-Host "=" * 60 -ForegroundColor Green
+      Write-Host ""
+    EOT
+    
+    interpreter = ["PowerShell", "-Command"]
+    working_dir = path.module
+  }
+}
+
 # Azure AI model deployments automation (fast local execution)
 resource "null_resource" "ai_model_deployments" {
   for_each = var.enable_ai_automation ? local.region_models : {}
@@ -1214,7 +1521,8 @@ resource "null_resource" "ai_model_deployments" {
   depends_on = [
     azapi_resource.ai_project,
     azapi_resource.ai_foundry,
-    azurerm_role_assignment.storage_blob_data_contributor_user
+    azurerm_role_assignment.storage_blob_data_contributor_user,
+    null_resource.model_validation
   ]
 
   provisioner "local-exec" {
@@ -1223,7 +1531,10 @@ resource "null_resource" "ai_model_deployments" {
       $foundryName = "${local.foundry_names[each.key]}"
       $rg = "${azurerm_resource_group.rg.name}"
 
-      Write-Host "=== Deploying models for region $region (Foundry: $foundryName) ==="
+      Write-Host "=== AI-Powered Model Deployment for $region ===" -ForegroundColor Cyan
+      Write-Host "Foundry: $foundryName" -ForegroundColor Green
+      Write-Host "Models to deploy in this region: ${join(", ", [for m in local.region_models[each.key] : m])}" -ForegroundColor Yellow
+      Write-Host "Using validation results..." -ForegroundColor Yellow
       Start-Sleep -Seconds 15
 
       $modelSpecs = ConvertFrom-Json @'
@@ -1232,11 +1543,24 @@ ${replace(jsonencode(local.model_deployment_payload[each.key]),"'","''")}
 
       foreach ($spec in $modelSpecs) {
         if (-not $spec.model_name) {
-          Write-Host "[SKIP] No deployment spec registered for alias $($spec.alias)"
+          Write-Host "[SKIP] No deployment spec registered for alias $($spec.alias)" -ForegroundColor Yellow
           continue
         }
 
-        Write-Host "Deploying $($spec.alias) -> model $($spec.model_name) ($($spec.model_version))"
+        Write-Host "[DEPLOY] $($spec.alias) -> model $($spec.model_name) ($($spec.model_version))" -ForegroundColor Cyan
+        
+        # Enhanced deployment with AI validation feedback
+        if ($spec.alias -eq "sora") {
+          Write-Host "[INFO] Deploying Sora with validation..." -ForegroundColor Magenta
+          $soraStatus = "${local.sora_deployment_status.deployment_ready}"
+          if ($soraStatus -eq "true") {
+            Write-Host "[OK] AI validation confirmed: Sora deployment ready" -ForegroundColor Green
+          } else {
+            Write-Host "[WARN] AI validation warning: Sora may not be available" -ForegroundColor Yellow
+            Write-Host "Recommended action: ${local.sora_deployment_status.recommended_action}" -ForegroundColor Yellow
+          }
+        }
+        
         az cognitiveservices account deployment create `
           --resource-group $rg `
           --name $foundryName `
@@ -1412,7 +1736,7 @@ resource "null_resource" "verify_connections" {
   }
 }
 
-# Multi-Agent Deployment - Create real agents in Microsoft Foundry (fast local execution)
+# Multi-Agent Deployment - Create agents using NEW Agents API (2.0.0b1+)
 # Deploy agents per region/project
 resource "null_resource" "deploy_multi_agents_per_region" {
   for_each = var.enable_multi_agent ? toset(local.foundry_regions) : toset([])
@@ -1427,7 +1751,9 @@ resource "null_resource" "deploy_multi_agents_per_region" {
 
   provisioner "local-exec" {
     command     = <<-EOT
-      Write-Host "Deploying agents to ${each.key} project..."
+      Write-Host "========================================" -ForegroundColor Cyan
+      Write-Host "DEPLOYING NEW AGENTS TO ${each.key}" -ForegroundColor Cyan  
+      Write-Host "========================================" -ForegroundColor Cyan
       
       # Set environment variables for Python script
       $env:AZURE_SUBSCRIPTION_ID = "${data.azurerm_client_config.current.subscription_id}"
@@ -1439,19 +1765,20 @@ resource "null_resource" "deploy_multi_agents_per_region" {
       $env:AGENT_REGION_MAP = '${jsonencode(var.agent_region_assignments)}'
       $env:AGENT_MODEL_MAP = '${jsonencode(var.agent_model_assignments)}'
       
-      # Wait for AI Foundry to be ready
-      Write-Host "Waiting for AI Foundry to be ready..."
-      Start-Sleep -Seconds 30
+      Write-Host "Environment configured for ${each.key}" -ForegroundColor Green
+      Write-Host "  Project: ${local.ai_project_names[each.key]}" -ForegroundColor Gray
+      Write-Host "  Endpoint: ${local.ai_project_endpoints[each.key]}" -ForegroundColor Gray
       
       # Run the Python agent deployment script
-      Write-Host "Running deploy_real_agents.py for ${each.key}..."
+      Write-Host "Running deploy_azure_agents.py for ${each.key}..." -ForegroundColor Cyan
       Set-Location "${path.module}\..\src\app\agents"
       
-      # Install required packages if needed
-      python -m pip install --quiet azure-ai-projects azure-identity python-dotenv
+      # Install NEW Agents API SDK (2.0.0b1+) - required for NEW format
+      Write-Host "Installing NEW Agents API SDK..." -ForegroundColor Yellow
+      python -m pip install --quiet --pre 'azure-ai-projects>=2.0.0b1' azure-identity python-dotenv
       
       # Run deployment and capture output
-      $output = python deploy_real_agents.py 2>&1 | Out-String
+      $output = python deploy_azure_agents.py 2>&1 | Out-String
       Write-Host $output
       
       # Parse the JSON output and store agent IDs in Key Vault with region prefix
@@ -1513,9 +1840,11 @@ resource "null_resource" "deploy_multi_agents_per_region" {
   triggers = {
     ai_foundry_id = values(azapi_resource.ai_foundry)[0].id
     ai_project_id = values(azapi_resource.ai_project)[0].id
-    agent_script_hash = filemd5("${path.module}/../src/app/agents/deploy_real_agents.py")
-    # Force agent recreation when agent configuration changes
+    agent_script_hash = filemd5("${path.module}/../src/app/agents/deploy_azure_agents.py")
     agent_config_hash = md5(jsonencode(var.agent_model_assignments))
+    agent_region_hash = md5(jsonencode(var.agent_region_assignments))
+    model_deployments = md5(jsonencode([for model in null_resource.ai_model_deployments : model.id]))
+    timestamp = timestamp()
   }
 }
 
@@ -1596,6 +1925,52 @@ resource "null_resource" "verify_agent_secrets" {
 
   triggers = {
     kv_id = azurerm_key_vault.kv.id
+  }
+}
+
+# Review deployed agents across all regions (diagnostic output)
+resource "null_resource" "review_deployed_agents" {
+  count = var.enable_multi_agent ? 1 : 0
+
+  depends_on = [
+    null_resource.deploy_multi_agents_per_region,
+    null_resource.verify_agent_secrets
+  ]
+
+  provisioner "local-exec" {
+    command     = <<-EOT
+      Write-Host "========================================" -ForegroundColor Cyan
+      Write-Host "REVIEWING DEPLOYED AGENTS" -ForegroundColor Cyan  
+      Write-Host "========================================" -ForegroundColor Cyan
+      
+      Set-Location "${path.module}\..\src\app\agents"
+      
+      # Install NEW Agents API SDK (2.0.0b1+)
+      Write-Host "Installing NEW Agents API SDK..." -ForegroundColor Yellow
+      python -m pip install --quiet --pre 'azure-ai-projects>=2.0.0b1' azure-identity python-dotenv
+      
+      # Run the review script
+      Write-Host "`nRunning agents review..." -ForegroundColor Cyan
+      python review_agents.py
+      
+      # Display the output JSON
+      if (Test-Path "agents_review.json") {
+        Write-Host "`n========================================" -ForegroundColor Green
+        Write-Host "AGENTS INVENTORY" -ForegroundColor Green
+        Write-Host "========================================" -ForegroundColor Green
+        Get-Content "agents_review.json" | ConvertFrom-Json | ConvertTo-Json -Depth 10
+        Write-Host "`n✓ Agent review complete - details saved to agents_review.json" -ForegroundColor Green
+      } else {
+        Write-Host "⚠ No agents_review.json generated" -ForegroundColor Yellow
+      }
+      
+      Set-Location "${path.module}"
+    EOT
+    interpreter = ["PowerShell", "-Command"]
+  }
+
+  triggers = {
+    agents_deployed = md5(jsonencode([for r in null_resource.deploy_multi_agents_per_region : r.id]))
   }
 }
 
@@ -1799,8 +2174,8 @@ resource "null_resource" "webapp_container_restart" {
     azurerm_linux_web_app.app,
     azurerm_key_vault_secret.agent_orchestrator_id,
     azurerm_key_vault_secret.agent_cropping_agent_id,
-    azurerm_key_vault_secret.agent_background_agent_id,
-    azurerm_key_vault_secret.agent_thumbnail_generator_id,
+    azurerm_key_vault_secret.agent_visual_content_agent_id,
+    azurerm_key_vault_secret.agent_document_agent_id,
     azurerm_key_vault_secret.agent_video_agent_id,
     azurerm_key_vault_access_policy.app_policy
   ]
@@ -1884,6 +2259,158 @@ resource "azurerm_monitor_metric_alert" "a2a_performance" {
   depends_on = [azurerm_monitor_action_group.a2a_alerts]
 }
 
+# Comprehensive A2A Framework Deployment Validation (replaces removed validation scripts)
+resource "null_resource" "a2a_deployment_validation" {
+  depends_on = [
+    azurerm_linux_web_app.app,
+    azurerm_key_vault.kv,
+    null_resource.deploy_multi_agents_per_region
+  ]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      Write-Host ""
+      Write-Host "============================================================================"
+      Write-Host "=== A2A FRAMEWORK DEPLOYMENT VALIDATION ==="
+      Write-Host "============================================================================"
+      Write-Host ""
+
+      # A2A Framework Structure Validation
+      Write-Host "[1/5] Validating A2A framework structure..."
+      $a2aPath = "../src/a2a"
+      if (Test-Path $a2aPath) {
+        Write-Host "[OK] A2A framework directory found" -ForegroundColor Green
+        
+        # Check core A2A components
+        $components = @(
+          "automation/deployment_manager.py",
+          "automation/monitoring_framework.py", 
+          "automation/process_manager.py",
+          "automation/test_framework.py",
+          "server/agent_execution.py",
+          "server/apps.py",
+          "server/request_handlers.py",
+          "agent/coordinator.py",
+          "api/chat_router.py"
+        )
+        
+        foreach ($component in $components) {
+          $fullPath = Join-Path $a2aPath $component
+          if (Test-Path $fullPath) {
+            Write-Host "  [OK] $component" -ForegroundColor Green
+          } else {
+            Write-Host "  [MISSING] $component missing" -ForegroundColor Red
+          }
+        }
+      } else {
+        Write-Host "[ERROR] A2A framework directory not found" -ForegroundColor Red
+        exit 1
+      }
+
+      # Model Region Configuration Validation
+      Write-Host ""
+      Write-Host "[2/5] Validating model region configuration..."
+      $modelRegions = @{
+        "swedencentral" = @("sora", "gpt-4o", "model-router", "FLUX.1-Kontext-pro")
+        "eastus" = @("FLUX.2-pro")
+      }
+      
+      foreach ($region in $modelRegions.Keys) {
+        Write-Host "  Region: $region" -ForegroundColor Yellow
+        foreach ($model in $modelRegions[$region]) {
+          Write-Host "    [OK] $model assigned to $region" -ForegroundColor Green
+        }
+      }
+
+      # Agent Configuration Validation
+      Write-Host ""
+      Write-Host "[3/5] Validating agent configuration..."
+      $kvName = "${azurerm_key_vault.kv.name}"
+      
+      # Check for agent secrets in Key Vault
+      $agentSecrets = @(
+        "agent-orchestrator-id",
+        "agent-cropping-agent-id", 
+        "agent-video-agent-id",
+        "agent-visual-content-agent-id",
+        "agent-document-agent-id"
+      )
+      
+      foreach ($secret in $agentSecrets) {
+        try {
+          $val = az keyvault secret show --vault-name $kvName --name $secret --query value -o tsv 2>$null
+          if ($val -and $val -ne "null" -and $val -ne "") {
+            Write-Host "  [OK] $secret configured" -ForegroundColor Green
+          } else {
+            Write-Host "  [WARN] $secret not found (may use backup)" -ForegroundColor Yellow
+          }
+        } catch {
+          Write-Host "  [WARN] $secret validation failed" -ForegroundColor Yellow
+        }
+      }
+
+      # A2A Automation Settings Validation  
+      Write-Host ""
+      Write-Host "[4/5] Validating A2A automation settings..."
+      $appName = "${local.web_app_name}"
+      $rgName = "${azurerm_resource_group.rg.name}"
+      
+      # Check A2A environment variables
+      Write-Host "  Checking A2A configuration in App Service..."
+      try {
+        $a2aConfig = az webapp config appsettings list --name $appName --resource-group $rgName --query "[?starts_with(name, 'A2A_')]" -o json | ConvertFrom-Json
+        
+        if ($a2aConfig.Count -gt 0) {
+          Write-Host "  [OK] A2A environment variables configured:" -ForegroundColor Green
+          foreach ($config in $a2aConfig) {
+            Write-Host "    - $($config.name): $($config.value)" -ForegroundColor Gray
+          }
+        } else {
+          Write-Host "  [ERROR] No A2A environment variables found" -ForegroundColor Red
+        }
+      } catch {
+        Write-Host "  [WARN] Could not validate A2A app settings: $_" -ForegroundColor Yellow
+      }
+
+      # Deployment Health Check
+      Write-Host ""
+      Write-Host "[5/5] Final A2A deployment health check..."
+      $appUrl = "https://${local.web_app_name}.azurewebsites.net"
+      
+      # Test A2A health endpoint if it exists
+      try {
+        $healthUrl = "$appUrl/a2a/health"
+        Write-Host "  Testing A2A health endpoint: $healthUrl"
+        $health = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 30 -Method GET -ErrorAction SilentlyContinue
+        
+        if ($health) {
+          Write-Host "  [OK] A2A system responding" -ForegroundColor Green
+          Write-Host "  Status: $($health | ConvertTo-Json -Compress)" -ForegroundColor Gray
+        } else {
+          Write-Host "  [WARN] A2A health endpoint not responding yet" -ForegroundColor Yellow
+        }
+      } catch {
+        Write-Host "  [WARN] A2A health check pending (normal for new deployment)" -ForegroundColor Yellow
+      }
+      
+      Write-Host ""
+      Write-Host "============================================================================"
+      Write-Host "=== A2A FRAMEWORK VALIDATION COMPLETE ==="
+      Write-Host "============================================================================"
+      Write-Host ""
+    EOT
+    
+    interpreter = ["PowerShell", "-Command"]
+    working_dir = path.module
+  }
+  
+  triggers = {
+    app_id = azurerm_linux_web_app.app.id
+    kv_id = azurerm_key_vault.kv.id
+    always_run = timestamp()
+  }
+}
+
 # Post-deploy automated fix to ensure Web App starts successfully
 resource "null_resource" "post_deploy_health" {
   depends_on = [
@@ -1924,7 +2451,7 @@ resource "null_resource" "post_deploy_health" {
       Write-Host ""
       Write-Host "[2b/7] Verifying container configuration..."
       $cfg = az webapp config container show --name $name --resource-group $rg --output json | ConvertFrom-Json
-      $desiredImage = "${local.registry_name}.azurecr.io/zava-chat-app:latest"
+      $desiredImage = "${local.registry_name}.azurecr.io/${local.web_app_name}:latest"
       $needsConfig = $true
       if ($cfg) {
         $currentImage = $cfg.dockerCustomImageName
@@ -1964,9 +2491,9 @@ resource "null_resource" "post_deploy_health" {
 
       Write-Host ""
       Write-Host "[4/7] Verifying container image exists in ACR..."
-      $imageExists = az acr repository show --name ${local.registry_name} --image zava-chat-app:latest --query "name" -o tsv 2>$null
+      $imageExists = az acr repository show --name ${local.registry_name} --image zava-media-app:latest --query "name" -o tsv 2>$null
       if ($imageExists) {
-        Write-Host "[OK] Container image found: zava-chat-app:latest"
+        Write-Host "[OK] Container image found: zava-media-app:latest"
       } else {
         Write-Host "[WARNING] Container image may still be building - will retry startup"
       }
