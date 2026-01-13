@@ -247,16 +247,16 @@
             <div class="message assistant">
                 <div class="agent-badge">System</div>
                 <div class="message-content">
-                    Welcome to Zava Media AI — your intelligent creative assistant powered by Azure AI Foundry.
+                    Welcome to Zava Media AI, your intelligent creative assistant powered by Azure AI Foundry.
                     <br><br>
                     <strong>I can help you with:</strong>
                     <ul style="margin-left: 20px; margin-top: 5px;">
-                        <li><strong>Image Generation</strong> — Create stunning thumbnails and visuals</li>
-                        <li><strong>Object Detection & Cropping</strong> — Intelligently crop objects or subjects</li>
-                        <li><strong>Background Transformation</strong> — Remove or replace backgrounds seamlessly</li>
-                        <li><strong>Video Generation</strong> — Create engaging video content with Sora</li>
-                        <li><strong>Document Processing</strong> — Extract and analyze content from PDFs and documents</li>
-                        <li><strong>Visual Enhancement</strong> — Optimize and enhance your media assets</li>
+                        <li><strong>Image Generation:</strong> Create stunning thumbnails and visuals</li>
+                        <li><strong>Object Detection & Cropping:</strong> Intelligently crop objects or subjects</li>
+                        <li><strong>Background Transformation:</strong> Remove or replace backgrounds seamlessly</li>
+                        <li><strong>Video Generation:</strong> Create engaging video content with Sora</li>
+                        <li><strong>Document Processing:</strong> Extract and analyze content from PDFs and documents</li>
+                        <li><strong>Visual Enhancement:</strong> Optimize and enhance your media assets</li>
                     </ul>
                     <br>
                     <strong>Powered by:</strong> Azure OpenAI Model Router (18 AI models), GPT-4o Vision, FLUX.2-pro, Sora, and FLUX.1-Kontext-pro
@@ -306,9 +306,9 @@
             ws.onmessage = function(event) {
                 const data = JSON.parse(event.data);
                 if (data.type === 'agent_response') {
-                    addMessage(data.message, 'assistant', data.agent, data.image_data);
+                    addMessage(data.message, 'assistant', data.agent, data.image_data, data.diagnostics);
                 } else if (data.type === 'error') {
-                    addMessage(data.message, 'assistant', 'Error');
+                    addMessage(data.message, 'assistant', 'Error', null, data.diagnostics);
                 }
             };
             
@@ -332,7 +332,7 @@
         // Initialize WebSocket connection
         connectWebSocket();
 
-        function addMessage(text, sender, agentName = null, imageData = null) {
+        function addMessage(text, sender, agentName = null, imageData = null, diagnostics = null) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${sender}`;
             
@@ -341,11 +341,17 @@
                 html += `<div class="agent-badge">${agentName}</div>`;
             }
             
-            html += `<div class="message-content">${escapeHtml(text)}`;
+            // Format text to preserve newlines and indentation
+            const formattedText = text.replace(/\n/g, '<br>').replace(/  /g, '&nbsp;&nbsp;');
+            html += `<div class="message-content" style="white-space: pre-wrap; font-family: monospace;">${formattedText}`;
             
             if (imageData) {
                 html += `<br><img src="${imageData}" class="message-image">`;
                 html += `<br><a href="${imageData}" download="thumbnail.png" class="download-btn">Download Image</a>`;
+            }
+            
+            if (diagnostics) {
+                html += `<br><br><details style="font-size: 11px; opacity: 0.7;"><summary>Diagnostic Details</summary><pre>${JSON.stringify(diagnostics, null, 2)}</pre></details>`;
             }
             
             html += `</div>`;

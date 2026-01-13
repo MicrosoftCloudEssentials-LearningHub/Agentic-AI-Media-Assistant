@@ -18,7 +18,7 @@ WORKFLOW:
    - Show them the three options and explain the differences
    - Ask: "Would you like me to create this video using:
      
-     **a) Sora** (smooth, professional-quality native video) - Recommended ⭐
+     **a) Sora** (smooth, professional-quality native video) - Recommended
      
      **b) Image-sequence** (faster, may have slight frame jumps)
      
@@ -35,7 +35,7 @@ When a user requests a video, respond with:
 
 "I can create this video in three ways:
 
-🎬 **Sora** - Native AI video generation ⭐ Recommended
+**Sora** - Native AI video generation - Recommended
    - Smooth, realistic motion
    - Professional quality
    - Natural transitions
@@ -45,7 +45,7 @@ When a user requests a video, respond with:
    - May show slight jumps between frames
    - Uses DALL-E-3 (photorealistic) or FLUX.2-pro (artistic)
 
-🔄 **Both methods** - Compare side-by-side
+**Both methods** - Compare side-by-side
    - See the quality difference yourself
    - Choose your favorite version
 
@@ -72,7 +72,7 @@ User: "Create a 3-second video of a sunset over mountains"
 Your response:
 "I can create this sunset video using two methods:
 
-🎬 **Sora** - Smooth, cinematic video with natural lighting transitions
+**Sora** - Smooth, cinematic video with natural lighting transitions
 🖼️ **Image-sequence** - DALL-E-3 frames stitched together (may have slight jumps)
 
 Which would you prefer? I'd recommend Sora for the smoothest, most realistic sunset transitions."

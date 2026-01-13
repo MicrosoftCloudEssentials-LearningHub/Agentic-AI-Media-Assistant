@@ -43,6 +43,11 @@ output "ai_foundry_endpoints_by_model" {
   description = "Map of model => Foundry endpoint (per-model routing)"
 }
 
+output "model_region_assignments" {
+  value       = local.region_models
+  description = "Map of region => list of models deployed in that region"
+}
+
 output "resource_group_name" {
   value       = azurerm_resource_group.rg.name
   description = "Resource group name"
@@ -90,15 +95,35 @@ output "ai_project_primary_endpoint" {
   description = "Primary AI Project endpoint URL for agents API"
 }
 
+output "ai_foundry_endpoints_all_regions" {
+  value       = local.foundry_endpoints
+  description = "Map of all AI Foundry endpoints by region"
+}
+
+output "ai_project_endpoints_all_regions" {
+  value       = local.ai_project_endpoints
+  description = "Map of all AI Project endpoints by region for agents API"
+}
+
+output "inference_endpoint_sweden" {
+  value       = "https://${local.foundry_names["swedencentral"]}.cognitiveservices.azure.com"
+  description = "Sweden Central inference endpoint for FLUX.1 and Sora"
+}
+
+output "inference_endpoint_westus3" {
+  value       = contains(keys(local.foundry_names), "westus3") ? "https://${local.foundry_names["westus3"]}.cognitiveservices.azure.com" : ""
+  description = "West US 3 inference endpoint for FLUX.2"
+}
+
 # Agent secret names (backup approach for zero-touch deployment)
 output "agent_ids" {
   value = var.enable_ai_automation ? {
     for k, v in {
-      agent_orchestrator_id        = azurerm_key_vault_secret.agent_orchestrator_id.name
-      agent_cropping_agent_id      = azurerm_key_vault_secret.agent_cropping_agent_id.name
-      agent_background_agent_id    = azurerm_key_vault_secret.agent_background_agent_id.name
-      agent_thumbnail_generator_id = azurerm_key_vault_secret.agent_thumbnail_generator_id.name
-      agent_video_agent_id         = azurerm_key_vault_secret.agent_video_agent_id.name
+      agent_orchestrator_id         = azurerm_key_vault_secret.agent_orchestrator_id.name
+      agent_cropping_agent_id       = azurerm_key_vault_secret.agent_cropping_agent_id.name
+      agent_visual_content_agent_id = azurerm_key_vault_secret.agent_visual_content_agent_id.name
+      agent_document_agent_id       = azurerm_key_vault_secret.agent_document_agent_id.name
+      agent_video_agent_id          = azurerm_key_vault_secret.agent_video_agent_id.name
     } : k => v
   } : {}
   description = "Map of agent secret names for backup agent configuration"

@@ -19,8 +19,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
 
-from app.agents.agent_processor import AgentProcessor
-from app.agents.local_agent_processor import LocalAgentProcessor
+from services.hybrid_agent_service import HybridAgentService
 
 # Load environment variables
 load_dotenv()
@@ -101,11 +100,18 @@ templates = Jinja2Templates(directory="app/templates")
 orchestrator_error: Optional[str] = None
 
 try:
-    # Use Azure OpenAI models directly for media processing (no Agents API required)
-    # This gives us full access to Sora, DALL-E, FLUX, GPT-Image models
-    logger.info("Initializing Azure OpenAI-based orchestrator for media processing")
-    orchestrator = LocalAgentProcessor(agent_id="azure_media_orchestrator", domain="orchestrator")
-    logger.info("Azure orchestrator initialized successfully")
+    # Use Azure AI Agents - let them handle everything
+    logger.info("Initializing Hybrid Agent Service (Azure AI Agents + Fallback)")
+    orchestrator = HybridAgentService()
+    
+    if orchestrator.orchestrator_agent:
+        logger.info("✅ Agent service initialized successfully")
+        logger.info(f"  - Orchestrator Agent ID: {orchestrator.orchestrator_agent.id}")
+        logger.info("  - Orchestrator handles all routing with AI-powered decision making")
+    else:
+        logger.warning("⚠️ Agent service initialized with fallback mode")
+        logger.warning("  - Azure AI Agents unavailable, using local fallback responses")
+        orchestrator_error = "Azure AI Agents unavailable - using fallback mode"
 
 except Exception as e:
     orchestrator_error = str(e)
@@ -126,10 +132,29 @@ async def read_root(request: Request):
 @app.get("/diagnostics")
 async def diagnostics():
     """Expose orchestrator diagnostic details for troubleshooting."""
-    return {
+    diagnostics_info = {
         "orchestrator_initialized": orchestrator is not None,
-        "error": orchestrator_error,
+        "initialization_error": orchestrator_error,
+        "service_mode": "hybrid_agent_service",
     }
+    
+    if orchestrator:
+        diagnostics_info.update({
+            "agent_available": orchestrator.orchestrator_agent is not None,
+            "agent_client_initialized": orchestrator.agent_client is not None,
+            "endpoint": orchestrator.sweden_endpoint,
+        })
+        
+        if orchestrator.orchestrator_agent:
+            diagnostics_info["agent_id"] = orchestrator.orchestrator_agent.id
+            diagnostics_info["agent_name"] = orchestrator.orchestrator_agent.name
+            diagnostics_info["status"] = "fully_operational"
+        else:
+            diagnostics_info["status"] = "fallback_mode"
+    else:
+        diagnostics_info["status"] = "failed"
+    
+    return diagnostics_info
 
 @app.post("/upload")
 async def upload_image(file: UploadFile = File(...)):
@@ -180,8 +205,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     if not orchestrator:
                         error_msg = {
                             "type": "error",
-                            "message": "Agent service is currently unavailable. Please check configuration.",
-                            "details": orchestrator_error
+                            "message": f"Agent service is currently unavailable. Please check configuration.\n\n[DEBUG]\nError: {orchestrator_error}",
+                            "details": orchestrator_error,
+                            "diagnostics": {
+                                "orchestrator_initialized": False,
+                                "error": orchestrator_error
+                            }
                         }
                         logger.error(f"[{connection_id}] Orchestrator not available: {orchestrator_error}")
                         await websocket.send_text(fast_json_dumps(error_msg))
@@ -195,36 +224,35 @@ async def websocket_endpoint(websocket: WebSocket):
                         process_span.set_attribute("has_image", bool(image_data))
                         
                         try:
-                            additional_context = {}
+                            # Use Hybrid Agent Service
+                            logger.info(f"[{connection_id}] Calling hybrid orchestrator...")
+                            
+                            # Build request context
+                            request_context = {}
                             if image_data:
-                                additional_context["image_data"] = image_data
+                                request_context["image_data"] = image_data
                                 logger.debug(f"[{connection_id}] Added image data to context")
                             
-                            # Stream response from agent
-                            logger.info(f"[{connection_id}] Calling orchestrator.run_conversation_with_text_stream...")
-                            response_text = ""
-                            chunk_count = 0
+                            # Process with agent service (pass context)
+                            result = orchestrator.process_request(user_message, request_context)
                             
-                            for chunk in orchestrator.run_conversation_with_text_stream(
-                                user_message=user_message,
-                                additional_context=additional_context if additional_context else None
-                            ):
-                                response_text += chunk
-                                chunk_count += 1
-                                if chunk_count % 10 == 0:
-                                    logger.debug(f"[{connection_id}] Received {chunk_count} chunks, {len(response_text)} chars so far")
+                            logger.info(f"[{connection_id}] Processing complete")
+                            logger.info(f"[{connection_id}] Agent result: {str(result)[:200]}...")
                             
-                            logger.info(f"[{connection_id}] Stream complete: {chunk_count} chunks, {len(response_text)} total chars")
+                            # Extract response from agent
+                            response_text = result.get("text", "I processed your request but got an empty response.")
+                            agent_name = result.get("agent", "Zava Media Assistant")
                             
-                            # Send complete response back
+                            # Send response back to client
                             response = {
                                 "type": "agent_response",
-                                "agent": "Zava Media Assistant",
+                                "agent": agent_name,
                                 "message": response_text,
-                                "image_data": None  # Image processing would happen via agents
+                                "diagnostics": result.get("diagnostics"),
+                                "image_data": result.get("image_data")
                             }
                             
-                            logger.info(f"[{connection_id}] Sending response to client...")
+                            logger.info(f"[{connection_id}] Sending response: {response_text[:100]}...")
                             await websocket.send_text(fast_json_dumps(response))
                             logger.info(f"[{connection_id}] Response sent successfully")
                             
