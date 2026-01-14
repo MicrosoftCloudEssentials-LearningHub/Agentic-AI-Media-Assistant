@@ -6,11 +6,12 @@ Provides robust agent orchestration with graceful degradation
 import os
 import logging
 import time
-import httpx
 from typing import Dict, Any, Optional
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
 from azure.core.exceptions import HttpResponseError
+
+from services.env_utils import get_env
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +33,8 @@ class HybridAgentService:
         for proxy_var in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']:
             os.environ.pop(proxy_var, None)
         
-        # Create a clean HTTP client for OpenAI operations (reused across requests)
-        self.http_client = httpx.Client(
-            timeout=httpx.Timeout(60.0, connect=10.0),
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
-        )
-        
         # Get configuration
-        self.sweden_endpoint = os.getenv(
-            "AZURE_AI_PROJECT_ENDPOINT_SWEDEN",
-            os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-        )
+        self.sweden_endpoint = get_env("AZURE_AI_PROJECT_ENDPOINT_SWEDEN") or get_env("AZURE_AI_PROJECT_ENDPOINT")
         
         if not self.sweden_endpoint:
             logger.error("No Azure AI Project endpoint configured")
@@ -144,8 +136,10 @@ class HybridAgentService:
         logger.info(f"Processing with agent (attempt {attempt + 1})")
         
         try:
-            # Get OpenAI-compatible client with our pre-configured httpx client
-            openai_client = self.agent_client.get_openai_client(http_client=self.http_client)
+            # Get OpenAI-compatible client from the Azure AI Projects SDK
+            # Note: Passing a custom http_client here can cause duplicate keyword errors
+            # depending on SDK/OpenAI versions.
+            openai_client = self.agent_client.get_openai_client()
 
             logger.info(f"Invoking agent '{self.orchestrator_agent.name}' via Responses API")
             response = openai_client.responses.create(
@@ -228,6 +222,34 @@ class HybridAgentService:
     def _fallback_response(self, user_message: str, error: Optional[str] = None) -> Dict[str, Any]:
         """Generate a fallback response when agent is unavailable."""
         logger.info("Using fallback response mechanism")
+
+        proxy_vars = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]
+        proxy_env = {k: ("SET" if os.environ.get(k) else "") for k in proxy_vars}
+
+        sdk_versions: Dict[str, str] = {}
+        try:
+            import importlib.metadata as _md
+
+            for pkg in ["azure-ai-projects", "azure-identity", "openai", "httpx"]:
+                try:
+                    sdk_versions[pkg] = _md.version(pkg)
+                except Exception:
+                    sdk_versions[pkg] = "NOT INSTALLED"
+        except Exception:
+            sdk_versions = {"error": "Could not read package versions"}
+
+        httpx_client_signature: Dict[str, Any] = {}
+        try:
+            import inspect
+            import httpx as _httpx
+
+            params = list(inspect.signature(_httpx.Client).parameters.keys())
+            httpx_client_signature = {
+                "supports_proxies_kw": "proxies" in params,
+                "supports_proxy_kw": "proxy" in params,
+            }
+        except Exception:
+            httpx_client_signature = {"error": "Could not inspect httpx.Client signature"}
         
         # Build detailed diagnostic information
         diagnostics = {
@@ -235,7 +257,10 @@ class HybridAgentService:
             "agent_client_initialized": self.agent_client is not None,
             "orchestrator_found": self.orchestrator_agent is not None,
             "orchestrator_id": self.orchestrator_agent.id if self.orchestrator_agent else "NONE",
-            "error_details": error or "No specific error - agent not initialized"
+            "error_details": error or "No specific error - agent not initialized",
+            "sdk_versions": sdk_versions,
+            "httpx_client_signature": httpx_client_signature,
+            "proxy_env": proxy_env,
         }
         
         # Simple keyword-based responses

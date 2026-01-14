@@ -1739,7 +1739,10 @@ resource "null_resource" "verify_connections" {
 # Multi-Agent Deployment - Create agents using NEW Agents API (2.0.0b1+)
 # Deploy agents per region/project
 resource "null_resource" "deploy_multi_agents_per_region" {
-  for_each = var.enable_multi_agent ? toset(local.foundry_regions) : toset([])
+  for_each = var.enable_multi_agent ? { 
+    for region, agents in var.agent_region_assignments : region => agents 
+    if length(agents) > 0  # Only deploy to regions with agents configured
+  } : {}
 
   depends_on = [
     null_resource.ai_model_deployments,
@@ -1759,6 +1762,7 @@ resource "null_resource" "deploy_multi_agents_per_region" {
       $env:AZURE_SUBSCRIPTION_ID = "${data.azurerm_client_config.current.subscription_id}"
       $env:AZURE_RESOURCE_GROUP = "${azurerm_resource_group.rg.name}"
       $env:AZURE_AI_PROJECT_NAME = "${local.ai_project_names[each.key]}"
+      $env:AZURE_AI_FOUNDRY_NAME = "${local.foundry_names[each.key]}"
       $env:AZURE_LOCATION = "${each.key}"
       $env:AZURE_AI_PROJECT_ENDPOINT = "${local.ai_project_endpoints[each.key]}"
       $env:DEPLOY_REGION = "${each.key}"
@@ -1767,7 +1771,9 @@ resource "null_resource" "deploy_multi_agents_per_region" {
       
       Write-Host "Environment configured for ${each.key}" -ForegroundColor Green
       Write-Host "  Project: ${local.ai_project_names[each.key]}" -ForegroundColor Gray
+      Write-Host "  Foundry: ${local.foundry_names[each.key]}" -ForegroundColor Gray
       Write-Host "  Endpoint: ${local.ai_project_endpoints[each.key]}" -ForegroundColor Gray
+      Write-Host "  Agents to deploy: ${join(", ", each.value)}" -ForegroundColor Gray
       
       # Run the Python agent deployment script
       Write-Host "Running deploy_azure_agents.py for ${each.key}..." -ForegroundColor Cyan

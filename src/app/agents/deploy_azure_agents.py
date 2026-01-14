@@ -142,8 +142,11 @@ def deploy_agents():
     agent_model_map = json.loads(os.getenv("AGENT_MODEL_MAP", "{}"))
     
     if not project_endpoint:
-        # Use the actual deployed endpoint from terraform
-        project_endpoint = "https://aif-eastus2-5d360b17.cognitiveservices.azure.com/"
+        # Construct endpoint from Terraform output values
+        project_name = os.getenv("AZURE_AI_PROJECT_NAME", "proj-swedencentral-CHANGE_ME")
+        foundry_name = os.getenv("AZURE_AI_FOUNDRY_NAME", "aif-swedencentral-CHANGE_ME")
+        # Use NEW Agents API format: .services.ai.azure.com/api/projects/...
+        project_endpoint = f"https://{foundry_name}.services.ai.azure.com/api/projects/{project_name}"
 
     print("=" * 70)
     print(f"Idempotent Multi-Agent Provisioning - Azure AI Foundry ({deploy_region})")

@@ -27,6 +27,8 @@ Thumbs.db
 .gitignore
 
 # Environment
+.env
+.env.*
 .env.local
 .env.*.local
 

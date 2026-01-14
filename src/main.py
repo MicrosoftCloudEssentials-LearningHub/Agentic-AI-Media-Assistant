@@ -1,6 +1,7 @@
 import os
 import logging
 import json
+import asyncio
 import traceback
 from typing import Any, Dict, Optional
 from datetime import datetime
@@ -20,9 +21,12 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
 
 from services.hybrid_agent_service import HybridAgentService
+from services.direct_model_service import DirectModelService
+from services.env_utils import get_env, get_env_with_source, is_running_in_azure
 
 # Load environment variables
-load_dotenv()
+if not is_running_in_azure():
+    load_dotenv()
 
 # Configure comprehensive logging
 logging.basicConfig(
@@ -98,6 +102,7 @@ if os.path.exists(static_dir) and os.listdir(static_dir):
 templates = Jinja2Templates(directory="app/templates")
 
 orchestrator_error: Optional[str] = None
+direct_model_service: Optional[DirectModelService] = None
 
 try:
     # Use Azure AI Agents - let them handle everything
@@ -123,6 +128,158 @@ except Exception as e:
 def fast_json_dumps(obj):
     return orjson.dumps(obj).decode("utf-8")
 
+
+def _strip_json_fences(text: str) -> str:
+    """Remove common markdown code-fences around JSON."""
+    if not text:
+        return text
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        # Remove leading ``` or ```json
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        # Remove trailing ```
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        stripped = "\n".join(lines).strip()
+    return stripped
+
+
+def _try_parse_action_dict(text: str) -> Optional[Dict[str, Any]]:
+    """Parse action JSON payloads like {"action":"call_flux",...} from plain text."""
+    if not text:
+        return None
+    candidate = _strip_json_fences(text)
+    if not candidate:
+        return None
+    # Fast path: only attempt JSON parse when it looks like an object
+    if not (candidate.lstrip().startswith("{") and candidate.rstrip().endswith("}")):
+        return None
+    try:
+        obj = json.loads(candidate)
+    except Exception:
+        return None
+    if isinstance(obj, dict) and obj.get("action"):
+        return obj
+    return None
+
+
+def _extract_first_media_url_or_data_uri(model_result: Dict[str, Any]) -> Optional[str]:
+    """Extract a usable URL or data-uri from the DirectModelService response."""
+    data_items = model_result.get("data") or []
+    if not isinstance(data_items, list) or not data_items:
+        return None
+    first = data_items[0] or {}
+    if isinstance(first, dict):
+        if url := first.get("url"):
+            return str(url)
+        if b64_json := first.get("b64_json"):
+            return f"data:image/png;base64,{b64_json}"
+    return None
+
+
+async def _ensure_direct_model_service() -> DirectModelService:
+    global direct_model_service
+    if direct_model_service is None:
+        direct_model_service = DirectModelService()
+    return direct_model_service
+
+
+async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute a tool-like action payload and return a websocket response dict."""
+    action = (action_payload.get("action") or "").strip()
+    prompt = (action_payload.get("prompt") or "").strip()
+
+    if not action:
+        return {
+            "type": "error",
+            "message": "Missing 'action' in request payload.",
+            "diagnostics": {"action_payload": action_payload},
+        }
+
+    if action in {"call_flux", "call_flux_kontext", "call_sora"} and not prompt:
+        return {
+            "type": "error",
+            "message": f"Missing 'prompt' for action '{action}'.",
+            "diagnostics": {"action_payload": action_payload},
+        }
+
+    # Optional parameters
+    size = (action_payload.get("size") or "1024x1024").strip()
+    duration = action_payload.get("duration")
+    resolution = (action_payload.get("resolution") or "1920x1080").strip()
+
+    svc = await _ensure_direct_model_service()
+
+    try:
+        if action == "call_flux":
+            # FLUX.2-pro (West US 3)
+            result = await asyncio.to_thread(svc.generate_image_flux2, prompt, size)
+            image_data = _extract_first_media_url_or_data_uri(result)
+            if not image_data:
+                return {
+                    "type": "error",
+                    "message": "FLUX did not return an image.",
+                    "diagnostics": {"action": action, "result": result},
+                }
+            return {
+                "type": "agent_response",
+                "agent": "FLUX.2-pro",
+                "message": "Generated image with FLUX.2-pro.",
+                "image_data": image_data,
+                "diagnostics": {"action": action, "model": result.get("model"), "size": size},
+            }
+
+        if action == "call_flux_kontext":
+            # FLUX.1-Kontext-pro (Sweden Central)
+            result = await asyncio.to_thread(svc.generate_image_flux1, prompt, size)
+            image_data = _extract_first_media_url_or_data_uri(result)
+            if not image_data:
+                return {
+                    "type": "error",
+                    "message": "FLUX Kontext did not return an image.",
+                    "diagnostics": {"action": action, "result": result},
+                }
+            return {
+                "type": "agent_response",
+                "agent": "FLUX.1-Kontext-pro",
+                "message": "Generated image with FLUX.1-Kontext-pro.",
+                "image_data": image_data,
+                "diagnostics": {"action": action, "model": result.get("model"), "size": size},
+            }
+
+        if action == "call_sora":
+            # Sora video generation (UI currently doesn't render video, so return URL in message)
+            resolved_duration = 10
+            if isinstance(duration, (int, float)) and duration > 0:
+                resolved_duration = int(duration)
+            result = await asyncio.to_thread(svc.generate_video_sora, prompt, resolved_duration, resolution)
+            media_url = _extract_first_media_url_or_data_uri(result)
+            message = "Generated video with Sora." if media_url else "Sora request completed, but no URL was returned."
+            if media_url:
+                message += f"\nURL: {media_url}"
+            return {
+                "type": "agent_response",
+                "agent": "Sora",
+                "message": message,
+                "diagnostics": {"action": action, "model": result.get("model"), "resolution": resolution, "duration": resolved_duration},
+            }
+
+        return {
+            "type": "error",
+            "message": f"Unknown action: {action}",
+            "diagnostics": {"action_payload": action_payload},
+        }
+
+    except Exception as e:
+        logger.error(f"Action execution failed ({action}): {e}", exc_info=True)
+        return {
+            "type": "error",
+            "message": f"Action execution failed: {str(e)}",
+            "diagnostics": {"action": action, "exception": str(e)},
+        }
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     """Serve the main interface"""
@@ -132,10 +289,26 @@ async def read_root(request: Request):
 @app.get("/diagnostics")
 async def diagnostics():
     """Expose orchestrator diagnostic details for troubleshooting."""
+    project_endpoint, project_endpoint_source = get_env_with_source("AZURE_AI_PROJECT_ENDPOINT")
+    project_endpoint_sweden, project_endpoint_sweden_source = get_env_with_source("AZURE_AI_PROJECT_ENDPOINT_SWEDEN")
+    project_name, project_name_source = get_env_with_source("AZURE_AI_PROJECT_NAME")
+
     diagnostics_info = {
         "orchestrator_initialized": orchestrator is not None,
         "initialization_error": orchestrator_error,
         "service_mode": "hybrid_agent_service",
+        "env": {
+            "RUNNING_IN_AZURE": is_running_in_azure(),
+            "WEBSITE_SITE_NAME": get_env("WEBSITE_SITE_NAME"),
+            "AZURE_AI_PROJECT_ENDPOINT": project_endpoint,
+            "AZURE_AI_PROJECT_ENDPOINT__SOURCE": project_endpoint_source,
+            "AZURE_AI_PROJECT_ENDPOINT_SWEDEN": project_endpoint_sweden,
+            "AZURE_AI_PROJECT_ENDPOINT_SWEDEN__SOURCE": project_endpoint_sweden_source,
+            "AZURE_AI_PROJECT_NAME": project_name,
+            "AZURE_AI_PROJECT_NAME__SOURCE": project_name_source,
+            "AZURE_AI_AGENT_ENDPOINT": get_env("AZURE_AI_AGENT_ENDPOINT"),
+            "AZURE_AI_FOUNDRY_ENDPOINT": get_env("AZURE_AI_FOUNDRY_ENDPOINT"),
+        },
     }
     
     if orchestrator:
@@ -189,9 +362,26 @@ async def websocket_endpoint(websocket: WebSocket):
                     logger.debug(f"[{connection_id}] Received data: {data[:200]}...")
                     
                     message_data = json.loads(data)
-                    
+
+                    # Support both the standard UI payload and tool/action payloads
                     user_message = message_data.get("message", "")
                     image_data = message_data.get("image", None)
+
+                    # If client sent an explicit action payload, handle it directly
+                    if isinstance(message_data, dict) and message_data.get("action"):
+                        logger.info(f"[{connection_id}] Handling direct action: {message_data.get('action')}")
+                        action_response = await _handle_action(message_data)
+                        await websocket.send_text(fast_json_dumps(action_response))
+                        continue
+
+                    # If the user typed/pasted an action JSON blob into the chat, handle it
+                    if isinstance(user_message, str):
+                        parsed_action = _try_parse_action_dict(user_message)
+                        if parsed_action:
+                            logger.info(f"[{connection_id}] Handling action from user message: {parsed_action.get('action')}")
+                            action_response = await _handle_action(parsed_action)
+                            await websocket.send_text(fast_json_dumps(action_response))
+                            continue
                     
                     logger.info(f"[{connection_id}] User message: {user_message[:100]}...")
                     if image_data:
@@ -242,6 +432,15 @@ async def websocket_endpoint(websocket: WebSocket):
                             # Extract response from agent
                             response_text = result.get("text", "I processed your request but got an empty response.")
                             agent_name = result.get("agent", "Zava Media Assistant")
+
+                            # If the agent responded with an action payload, execute it
+                            if isinstance(response_text, str):
+                                parsed_action = _try_parse_action_dict(response_text)
+                                if parsed_action:
+                                    logger.info(f"[{connection_id}] Handling action from agent response: {parsed_action.get('action')}")
+                                    action_response = await _handle_action(parsed_action)
+                                    await websocket.send_text(fast_json_dumps(action_response))
+                                    continue
                             
                             # Send response back to client
                             response = {
