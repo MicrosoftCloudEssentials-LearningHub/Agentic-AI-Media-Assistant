@@ -10,7 +10,10 @@ from azure.ai.inference import ChatCompletionsClient
 from azure.core.credentials import AzureKeyCredential
 from dotenv import load_dotenv
 
-load_dotenv()
+from services.env_utils import get_env, is_running_in_azure
+
+if not is_running_in_azure():
+    load_dotenv()
 
 
 class IntentClassification(BaseModel):
@@ -34,9 +37,9 @@ class HandoffService:
     
     def __init__(self):
         """Initialize the handoff service with GPT client"""
-        endpoint = os.getenv("gpt_endpoint")
-        api_key = os.getenv("gpt_api_key")
-        deployment = os.getenv("gpt_deployment")
+        endpoint = get_env("gpt_endpoint")
+        api_key = get_env("gpt_api_key")
+        deployment = get_env("gpt_deployment")
         
         if not all([endpoint, api_key, deployment]):
             raise ValueError("Missing GPT configuration in environment")
