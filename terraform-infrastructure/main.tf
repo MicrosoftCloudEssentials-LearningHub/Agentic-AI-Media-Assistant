@@ -2259,8 +2259,10 @@ resource "azurerm_monitor_metric_alert" "a2a_performance" {
   depends_on = [azurerm_monitor_action_group.a2a_alerts]
 }
 
-# Comprehensive A2A Framework Deployment Validation (replaces removed validation scripts)
+# Comprehensive A2A Framework Deployment Validation
 resource "null_resource" "a2a_deployment_validation" {
+  count = var.enable_a2a_automation ? 1 : 0
+  
   depends_on = [
     azurerm_linux_web_app.app,
     azurerm_key_vault.kv,
