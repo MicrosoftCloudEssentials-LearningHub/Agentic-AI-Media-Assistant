@@ -1,4 +1,4 @@
-resource_group_name = "RG-AI-Mediaxi30"
+resource_group_name = "RG-AI-Media-DemoX1"
 location            = "eastus2"
 name_prefix         = "zava"
 app_service_location = "westus3"
@@ -13,6 +13,9 @@ enable_multi_agent = true
 
 # Enable AI automation and model deployments
 enable_ai_automation = true
+
+# Enable A2A (Agent-to-Agent) automation framework
+enable_a2a_automation = true
 
 # Agent-to-Region Assignments (2 agents in 1 region)
 # Sweden Central: 2 chat agents (orchestrator, cropping_agent)
