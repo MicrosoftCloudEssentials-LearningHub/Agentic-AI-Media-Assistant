@@ -68,7 +68,7 @@ Last updated: 2026-01-13
   - **`vision-analyst`**: Object detection and coordinate analysis using `GPT-4o` chat model with vision (provides JSON coordinates via HTTPS). ~ `Analyzes images to detect objects and return bounding box coordinates as JSON. Application code handles actual image manipulation (cropping, resizing, etc.) using the provided coordinates.`
 - **Code-Based Orchestration** for generation tasks:
   - **Video Generation**: Direct calls to `Sora` (Sweden Central). ~ `Video generation model (not used by agents, called directly via code)`
-  - **Image Generation**: Direct calls to `FLUX.1-Kontext-pro` (Sweden Central) ~ `Image generation model (not used by agents, called directly via code)` and `FLUX.2-pro` (East US) ~ `Image generation model (not used by agents, called directly via code)`.
+  - **Image Generation**: Direct calls to `FLUX.1-Kontext-pro` (Sweden Central) and `FLUX.2-pro` (East US) ~ `Image generation model (not used by agents, called directly via code)`.
 - **Real-Time Image Processing**: Upload or paste images directly into the chat for immediate agent action
 - **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents across multiple projects
 - **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle
