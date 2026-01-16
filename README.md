@@ -5,7 +5,7 @@ Costa Rica
 [![GitHub](https://img.shields.io/badge/--181717?logo=github&logoColor=ffffff)](https://github.com/)
 [brown9804](https://github.com/brown9804)
 
-Last updated: 2026-01-13
+Last updated: 2026-01-16
 
 ----------
 
@@ -184,13 +184,20 @@ graph TD
      - Note: No agents are created in East US. The FLUX.2-pro model is accessed directly via code.
    - **Agent IDs are automatically stored in Azure Key Vault** with region prefixes and retrieved by the web app
 
-3. **Test Media Processing**: For example:
-   - **Image Upload**: Upload an image and ask "Crop the main subject"
-   - **Background**: "Change the background to a beach scene" (routed to East US for fast generation)
-   - **Thumbnail**: "Create a thumbnail with the text 'AMAZING'" (routed to East US)
-   - **Multi-Step**: "Crop the car, put it on a race track background, and add the text 'SPEED' in red"
-   - **Video**: "Generate a 5-second video of a sunset over mountains" (Sweden Central - Sora)
-   - **Document**: "Extract all text from this PDF" or "Summarize this document" (Sweden Central - FLUX.1-Kontext-pro)
+3. **Test Processing**: For example:
+  
+    - **Chat**: Ask for information "What is GitHub Copilot?" 
+    
+        <img width="1434" height="941" alt="image" src="https://github.com/user-attachments/assets/55b76f3f-f566-4b42-99ad-7d25b5e6efa1" />
+        
+        <img width="1204" height="921" alt="image" src="https://github.com/user-attachments/assets/232c11bb-81b6-40c6-9149-8a848a935560" />
+  
+     - **Image Upload**: Upload an image and ask "Crop the main subject"
+     - **Background**: "Change the background to a beach scene" (routed to East US for fast generation)
+     - **Thumbnail**: "Create a thumbnail with the text 'AMAZING'" (routed to East US)
+     - **Multi-Step**: "Crop the car, put it on a race track background, and add the text 'SPEED' in red"
+     - **Video**: "Generate a 5-second video of a sunset over mountains" (Sweden Central - Sora)
+     - **Document**: "Extract all text from this PDF" or "Summarize this document" (Sweden Central - FLUX.1-Kontext-pro)
 
 <!-- START BADGE -->
 <div align="center">

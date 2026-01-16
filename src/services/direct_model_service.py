@@ -73,12 +73,95 @@ class DirectModelService:
         # - Sora uses a v1 job-based API with api-version=preview.
         self.api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
         self.images_api_version = os.getenv("AZURE_OPENAI_IMAGES_API_VERSION", "2025-04-01-preview")
+        # Next generation v1 Azure OpenAI APIs use versionless routing: api-version=preview.
+        # This is especially important for /openai/v1/* endpoints.
+        self.v1_api_version = os.getenv("AZURE_OPENAI_V1_API_VERSION", "preview")
         self.sora_api_version = os.getenv("AZURE_OPENAI_SORA_API_VERSION", "preview")
+
+    def _allowed_image_sizes(self) -> set[str]:
+        """Return the allowed image sizes for image generation.
+
+        Defaults align with common v1 images APIs. Override with:
+        AZURE_OPENAI_ALLOWED_IMAGE_SIZES="1024x1024,1024x1792,1792x1024"
+        """
+        raw = (os.getenv("AZURE_OPENAI_ALLOWED_IMAGE_SIZES") or "").strip()
+        if raw:
+            sizes = {s.strip() for s in raw.split(",") if s.strip()}
+            if sizes:
+                return sizes
+        return {"1024x1024", "1024x1792", "1792x1024"}
+
+    def _normalize_image_size(self, size: Optional[str]) -> str:
+        """Normalize image size to an allowed value.
+
+        If the requested size isn't allowed, fall back to 1024x1024.
+        """
+        requested = (size or "").strip().lower()
+        allowed = {s.lower() for s in self._allowed_image_sizes()}
+        if requested and requested in allowed:
+            # Preserve canonical casing from allowlist when possible.
+            for s in self._allowed_image_sizes():
+                if s.lower() == requested:
+                    return s
+            return requested
+        fallback = "1024x1024"
+        if requested and requested != fallback:
+            logger.warning(
+                "Requested image size '%s' not allowed; falling back to %s. Allowed=%s",
+                requested,
+                fallback,
+                sorted(self._allowed_image_sizes()),
+            )
+        return fallback
+
+    def _is_api_version_not_supported(self, response_text: str) -> bool:
+        try:
+            obj = json.loads(response_text)
+            msg = (((obj or {}).get("error") or {}).get("message") or "")
+            return "api version not supported" in str(msg).lower()
+        except Exception:
+            return "api version not supported" in str(response_text).lower()
 
     def _normalize_endpoint(self, endpoint: Optional[str]) -> Optional[str]:
         if not endpoint:
             return endpoint
         return endpoint.rstrip("/")
+
+    def _strip_openai_v1_suffix(self, endpoint: Optional[str]) -> Optional[str]:
+        if not endpoint:
+            return endpoint
+        e = self._normalize_endpoint(endpoint)
+        if not e:
+            return e
+        # Support user-provided endpoints that already include /openai/v1
+        for suffix in ("/openai/v1", "/openai/v1/"):
+            if e.lower().endswith(suffix):
+                return e[: -len(suffix)]
+        return e
+
+    def _to_openai_azure_domain(self, endpoint: Optional[str]) -> Optional[str]:
+        if not endpoint:
+            return endpoint
+        e = self._normalize_endpoint(endpoint)
+        if not e:
+            return e
+        return e.replace(".cognitiveservices.azure.com", ".openai.azure.com")
+
+    def _candidate_openai_endpoints(self, endpoint: Optional[str]) -> list[str]:
+        """Return endpoint candidates, preferring the provided endpoint then a domain-swapped fallback."""
+        base = self._strip_openai_v1_suffix(endpoint)
+        if not base:
+            return []
+        candidates = [base]
+        swapped = self._to_openai_azure_domain(base)
+        if swapped and swapped != base:
+            candidates.append(swapped)
+        # De-dup while preserving order
+        out: list[str] = []
+        for c in candidates:
+            if c and c not in out:
+                out.append(c)
+        return out
 
     def _get_optional_api_key(self, env_key_name: str) -> Optional[str]:
         """Return an API key if configured for key-based auth; otherwise None."""
@@ -102,6 +185,21 @@ class DirectModelService:
         """Get Azure AD access token for API authentication."""
         token = self.credential.get_token("https://cognitiveservices.azure.com/.default")
         return token.token
+
+    def _parse_resolution(self, resolution: str) -> tuple[int, int]:
+        """Parse resolution strings like '1920x1080' into (width,height)."""
+        raw = (resolution or "").strip().lower()
+        if "x" in raw:
+            parts = raw.split("x", 1)
+            try:
+                w = int(str(parts[0]).strip())
+                h = int(str(parts[1]).strip())
+                if w > 0 and h > 0:
+                    return w, h
+            except Exception:
+                pass
+        # Default to square when unknown.
+        return 1080, 1080
     
     def generate_image_flux1(self, prompt: str, size: str = "1024x1024", **kwargs) -> Dict[str, Any]:
         """
@@ -116,70 +214,78 @@ class DirectModelService:
             dict with image data (base64 or URL) and metadata
         """
         logger.info(f"Generating image with FLUX.1-Kontext-pro: {prompt[:100]}")
+
+        size = self._normalize_image_size(size)
         
         try:
-            # Prefer the deployment-scoped OpenAI-compatible images route.
-            # Format: https://<foundry>.cognitiveservices.azure.com/openai/deployments/<deployment>/images/generations
-            endpoint = self._normalize_endpoint(self.flux1_inference)
-            url = f"{endpoint}/openai/deployments/{self.flux1_deployment}/images/generations"
-
             api_key = self._get_optional_api_key("AZURE_OPENAI_API_KEY_FLUX")
             headers = self._build_headers(api_key=api_key)
-            
-            # Add api-version as query parameter
-            url_with_version = f"{url}?api-version={self.images_api_version}"
-            
+
             payload = {
                 "prompt": prompt,
                 "size": size,
                 "n": kwargs.get("n", 1),
                 "quality": kwargs.get("quality", "standard"),
-                "response_format": kwargs.get("response_format", "url")  # "url" or "b64_json"
+                "response_format": kwargs.get("response_format", "url"),  # "url" or "b64_json"
             }
-            
-            response = requests.post(url_with_version, headers=headers, json=payload, timeout=120)
 
-            if response.status_code == 200:
-                result = response.json()
-                logger.info("SUCCESS - FLUX.1-Kontext-pro image generated")
-                return {
-                    "model": self.flux1_deployment,
-                    "data": result.get("data", []),
-                    "request": {"url": url, "api_version": self.images_api_version},
-                    "status": "success",
-                }
-
-            # Some Foundry-hosted model deployments expose images via the v1 route.
-            if response.status_code == 404:
-                v1_url = f"{endpoint}/openai/v1/images/generations?api-version={self.images_api_version}"
+            last_error: Optional[Dict[str, Any]] = None
+            for endpoint in self._candidate_openai_endpoints(self.flux1_inference):
+                # Match the known-working pattern: v1 images route with model=<deployment>.
                 v1_payload = dict(payload)
                 v1_payload["model"] = self.flux1_deployment
+
+                v1_url = f"{endpoint}/openai/v1/images/generations?api-version={self.v1_api_version}"
                 v1_resp = requests.post(v1_url, headers=headers, json=v1_payload, timeout=120)
+
+                if (
+                    v1_resp.status_code == 400
+                    and self._is_api_version_not_supported(v1_resp.text)
+                    and str(self.v1_api_version).lower() != "preview"
+                ):
+                    v1_url = f"{endpoint}/openai/v1/images/generations?api-version=preview"
+                    v1_resp = requests.post(v1_url, headers=headers, json=v1_payload, timeout=120)
+
                 if v1_resp.status_code == 200:
                     v1_result = v1_resp.json()
                     logger.info("SUCCESS - FLUX.1-Kontext-pro image generated via v1 route")
                     return {
                         "model": self.flux1_deployment,
                         "data": v1_result.get("data", []),
-                        "request": {"url": v1_url, "api_version": self.images_api_version},
+                        "request": {"url": v1_url, "api_version": self.v1_api_version, "size": size},
                         "status": "success",
                     }
 
-                logger.error(f"FLUX.1 v1 route error: {v1_resp.status_code} - {v1_resp.text}")
-                return {
+                # Fallback: deployment-scoped images route.
+                url = f"{endpoint}/openai/deployments/{self.flux1_deployment}/images/generations"
+                url_with_version = f"{url}?api-version={self.images_api_version}"
+                response = requests.post(url_with_version, headers=headers, json=payload, timeout=120)
+
+                if response.status_code == 200:
+                    result = response.json()
+                    logger.info("SUCCESS - FLUX.1-Kontext-pro image generated")
+                    return {
+                        "model": self.flux1_deployment,
+                        "data": result.get("data", []),
+                        "request": {"url": url, "api_version": self.images_api_version, "size": size},
+                        "status": "success",
+                    }
+
+                # Prefer v1 error details when v1 was close, otherwise deployment route errors.
+                last_error = {
                     "model": self.flux1_deployment,
-                    "error": v1_resp.text,
-                    "status_code": v1_resp.status_code,
-                    "request": {"url": v1_url, "api_version": self.images_api_version},
+                    "error": v1_resp.text if v1_resp.status_code != 404 else response.text,
+                    "status_code": v1_resp.status_code if v1_resp.status_code != 404 else response.status_code,
+                    "request": {"url": v1_url if v1_resp.status_code != 404 else url, "api_version": self.v1_api_version if v1_resp.status_code != 404 else self.images_api_version, "size": size},
                     "status": "error",
                 }
 
-            logger.error(f"FLUX.1 API error: {response.status_code} - {response.text}")
-            return {
+            logger.error(f"FLUX.1 API error: {last_error}")
+            return last_error or {
                 "model": self.flux1_deployment,
-                "error": response.text,
-                "status_code": response.status_code,
-                "request": {"url": url, "api_version": self.images_api_version},
+                "error": "No usable inference endpoint configured.",
+                "status_code": 500,
+                "request": {"url": None, "api_version": self.images_api_version, "size": size},
                 "status": "error",
             }
                 
@@ -204,70 +310,77 @@ class DirectModelService:
             dict with image data (base64 or URL) and metadata
         """
         logger.info(f"Generating image with FLUX.2-pro: {prompt[:100]}")
+
+        size = self._normalize_image_size(size)
         
         try:
-            # Prefer the deployment-scoped OpenAI-compatible images route.
-            # Format: https://<foundry>.cognitiveservices.azure.com/openai/deployments/<deployment>/images/generations
-            endpoint = self._normalize_endpoint(self.flux2_inference)
-            url = f"{endpoint}/openai/deployments/{self.flux2_deployment}/images/generations"
-
             api_key = self._get_optional_api_key("AZURE_OPENAI_API_KEY_FLUX")
             headers = self._build_headers(api_key=api_key)
-            
-            # Add api-version as query parameter
-            url_with_version = f"{url}?api-version={self.images_api_version}"
-            
             payload = {
                 "prompt": prompt,
                 "size": size,
                 "n": kwargs.get("n", 1),
-                "quality": kwargs.get("quality", "hd"),  # FLUX.2-pro supports higher quality
-                "response_format": kwargs.get("response_format", "url")
+                "quality": kwargs.get("quality", "hd"),
+                "response_format": kwargs.get("response_format", "url"),
             }
-            
-            response = requests.post(url_with_version, headers=headers, json=payload, timeout=120)
 
-            if response.status_code == 200:
-                result = response.json()
-                logger.info("✓ FLUX.2-pro image generated successfully")
-                return {
-                    "model": self.flux2_deployment,
-                    "data": result.get("data", []),
-                    "request": {"url": url, "api_version": self.images_api_version},
-                    "status": "success",
-                }
-
-            # Some Foundry-hosted model deployments expose images via the v1 route.
-            if response.status_code == 404:
-                v1_url = f"{endpoint}/openai/v1/images/generations?api-version={self.images_api_version}"
+            last_error: Optional[Dict[str, Any]] = None
+            for endpoint in self._candidate_openai_endpoints(self.flux2_inference):
+                # Match the known-working pattern: v1 images route with model=<deployment>.
                 v1_payload = dict(payload)
                 v1_payload["model"] = self.flux2_deployment
+
+                v1_url = f"{endpoint}/openai/v1/images/generations?api-version={self.v1_api_version}"
                 v1_resp = requests.post(v1_url, headers=headers, json=v1_payload, timeout=120)
+
+                if (
+                    v1_resp.status_code == 400
+                    and self._is_api_version_not_supported(v1_resp.text)
+                    and str(self.v1_api_version).lower() != "preview"
+                ):
+                    v1_url = f"{endpoint}/openai/v1/images/generations?api-version=preview"
+                    v1_resp = requests.post(v1_url, headers=headers, json=v1_payload, timeout=120)
+
                 if v1_resp.status_code == 200:
                     v1_result = v1_resp.json()
                     logger.info("✓ FLUX.2-pro image generated successfully via v1 route")
                     return {
                         "model": self.flux2_deployment,
                         "data": v1_result.get("data", []),
-                        "request": {"url": v1_url, "api_version": self.images_api_version},
+                        "request": {"url": v1_url, "api_version": self.v1_api_version, "size": size},
                         "status": "success",
                     }
 
-                logger.error(f"FLUX.2 v1 route error: {v1_resp.status_code} - {v1_resp.text}")
-                return {
+                # Fallback: deployment-scoped images route.
+                url = f"{endpoint}/openai/deployments/{self.flux2_deployment}/images/generations"
+                url_with_version = f"{url}?api-version={self.images_api_version}"
+                response = requests.post(url_with_version, headers=headers, json=payload, timeout=120)
+
+                if response.status_code == 200:
+                    result = response.json()
+                    logger.info("✓ FLUX.2-pro image generated successfully")
+                    return {
+                        "model": self.flux2_deployment,
+                        "data": result.get("data", []),
+                        "request": {"url": url, "api_version": self.images_api_version, "size": size},
+                        "status": "success",
+                    }
+
+                last_error = {
                     "model": self.flux2_deployment,
-                    "error": v1_resp.text,
-                    "status_code": v1_resp.status_code,
-                    "request": {"url": v1_url, "api_version": self.images_api_version},
+                    "error": v1_resp.text if v1_resp.status_code != 404 else response.text,
+                    "status_code": v1_resp.status_code if v1_resp.status_code != 404 else response.status_code,
+                    "request": {"url": v1_url if v1_resp.status_code != 404 else url, "api_version": self.v1_api_version if v1_resp.status_code != 404 else self.images_api_version, "size": size},
                     "status": "error",
                 }
+                continue
 
-            logger.error(f"FLUX.2 API error: {response.status_code} - {response.text}")
-            return {
+            logger.error(f"FLUX.2 API error: {last_error}")
+            return last_error or {
                 "model": self.flux2_deployment,
-                "error": response.text,
-                "status_code": response.status_code,
-                "request": {"url": url, "api_version": self.images_api_version},
+                "error": "No usable inference endpoint configured.",
+                "status_code": 500,
+                "request": {"url": None, "api_version": self.images_api_version, "size": size},
                 "status": "error",
             }
                 
@@ -295,8 +408,8 @@ class DirectModelService:
         logger.info(f"Generating video with Sora: {prompt[:100]}, duration={duration}s")
         
         try:
-            endpoint = self._normalize_endpoint(self.sora_inference)
-            if not endpoint:
+            endpoints = self._candidate_openai_endpoints(self.sora_inference)
+            if not endpoints:
                 return {
                     "model": self.sora_deployment,
                     "error": (
@@ -309,19 +422,31 @@ class DirectModelService:
             api_key = self._get_optional_api_key("AZURE_OPENAI_API_KEY_SORA")
             headers = self._build_headers(api_key=api_key)
 
-            # Sora v1 job-based API
-            create_url = f"{endpoint}/openai/v1/video/generations/jobs?api-version={self.sora_api_version}"
+            width, height = self._parse_resolution(resolution)
+            n_variants = kwargs.get("n_variants", 1)
+
+            # Sora v1 job-based API (matches your working curl schema)
             payload = {
-                "model": self.sora_deployment,
                 "prompt": prompt,
-                "duration": duration,
-                "resolution": resolution,
-                "fps": kwargs.get("fps", 30),
+                "height": height,
+                "width": width,
+                "n_seconds": int(duration),
+                "n_variants": int(n_variants),
+                "model": self.sora_deployment,
             }
 
-            create_resp = requests.post(create_url, headers=headers, json=payload, timeout=120)
-            if create_resp.status_code not in (200, 201):
-                return {
+            last_error: Optional[Dict[str, Any]] = None
+            job: Optional[Dict[str, Any]] = None
+            create_url: Optional[str] = None
+            selected_endpoint: Optional[str] = None
+            for endpoint in endpoints:
+                create_url = f"{endpoint}/openai/v1/video/generations/jobs?api-version={self.sora_api_version}"
+                create_resp = requests.post(create_url, headers=headers, json=payload, timeout=120)
+                if create_resp.status_code in (200, 201):
+                    job = create_resp.json()
+                    selected_endpoint = endpoint
+                    break
+                last_error = {
                     "model": self.sora_deployment,
                     "error": create_resp.text,
                     "status_code": create_resp.status_code,
@@ -329,7 +454,12 @@ class DirectModelService:
                     "status": "error",
                 }
 
-            job = create_resp.json()
+            if not job:
+                return last_error or {
+                    "model": self.sora_deployment,
+                    "error": "Sora job creation failed.",
+                    "status": "error",
+                }
             job_id = job.get("id") or job.get("job_id")
             if not job_id:
                 return {
@@ -340,7 +470,8 @@ class DirectModelService:
                     "status": "error",
                 }
 
-            get_job_url = f"{endpoint}/openai/v1/video/generations/jobs/{job_id}?api-version={self.sora_api_version}"
+            base_endpoint = selected_endpoint or endpoints[0]
+            get_job_url = f"{base_endpoint}/openai/v1/video/generations/jobs/{job_id}?api-version={self.sora_api_version}"
 
             max_poll_seconds = int(kwargs.get("max_poll_seconds", 600))
             poll_interval_seconds = float(kwargs.get("poll_interval_seconds", 2.0))
@@ -400,7 +531,7 @@ class DirectModelService:
                     "last_job": last_job,
                 }
 
-            content_url = f"{endpoint}/openai/v1/video/generations/{generation_id}/content/video?api-version={self.sora_api_version}"
+            content_url = f"{base_endpoint}/openai/v1/video/generations/{generation_id}/content/video?api-version={self.sora_api_version}"
             content_headers = dict(headers)
             content_headers.pop("Content-Type", None)
             content_headers["Accept"] = "application/octet-stream"

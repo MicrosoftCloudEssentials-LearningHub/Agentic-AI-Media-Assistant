@@ -303,6 +303,26 @@ def _looks_like_generation_request(text: str) -> bool:
     return any(k in lowered for k in ["image", "thumbnail", "poster", "banner", "logo", "cover", "video", "sora"])
 
 
+def _allowed_image_sizes_from_env() -> list[str]:
+    raw = (os.getenv("AZURE_OPENAI_ALLOWED_IMAGE_SIZES") or "").strip()
+    if raw:
+        sizes = [s.strip() for s in raw.split(",") if s.strip()]
+        if sizes:
+            return sorted(set(sizes))
+    return ["1024x1024", "1024x1792", "1792x1024"]
+
+
+def _is_allowed_image_sizes_question(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered.strip():
+        return False
+    wants_sizes = any(k in lowered for k in ["size", "sizes", "resolution", "dimensions", "dimension"]) and any(
+        k in lowered for k in ["image", "flux", "thumbnail", "poster", "banner", "logo", "cover"]
+    )
+    is_question = "?" in lowered or any(k in lowered for k in ["what", "which", "allowed", "available", "supported"])
+    return bool(wants_sizes and is_question)
+
+
 async def _ensure_direct_model_service() -> DirectModelService:
     global direct_model_service
     if direct_model_service is None:
@@ -432,8 +452,14 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                     else None,
                     "diagnostics": {"action": action, "result": result},
                 }
+            effective_size = ((result.get("request") or {}).get("size") or size)
+            allowed_sizes = _allowed_image_sizes_from_env()
+            size_note = ""
+            if str(effective_size).strip() and str(size).strip() and str(effective_size).strip() != str(size).strip():
+                size_note = f" (Used {effective_size} because {size} isn’t allowed. Allowed: {', '.join(allowed_sizes)})"
+
             message = _format_standard_reply(
-                answer="I generated an image from your prompt.",
+                answer=f"I generated an image from your prompt.{size_note}",
                 actions=["Generated image with FLUX.2-pro"],
                 next_steps=["Download the image", "Tell me if you want a different style or size"],
                 assumptions=["Your prompt describes the desired thumbnail/image"],
@@ -466,7 +492,11 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                 )
                 if wants_explain
                 else None,
-                "diagnostics": {"action": action, "model": result.get("model"), "size": size},
+                "diagnostics": {
+                    "action": action,
+                    "model": result.get("model"),
+                    "size": ((result.get("request") or {}).get("size") or size),
+                },
             }
 
         if action == "call_flux_kontext":
@@ -552,8 +582,14 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                     else None,
                     "diagnostics": {"action": action, "result": result},
                 }
+            effective_size = ((result.get("request") or {}).get("size") or size)
+            allowed_sizes = _allowed_image_sizes_from_env()
+            size_note = ""
+            if str(effective_size).strip() and str(size).strip() and str(effective_size).strip() != str(size).strip():
+                size_note = f" (Used {effective_size} because {size} isn’t allowed. Allowed: {', '.join(allowed_sizes)})"
+
             message = _format_standard_reply(
-                answer="I generated an image from your prompt.",
+                answer=f"I generated an image from your prompt.{size_note}",
                 actions=["Generated image with FLUX.1-Kontext-pro"],
                 next_steps=["Download the image", "Tell me if you want a different style or size"],
                 assumptions=["Your prompt describes the desired thumbnail/image"],
@@ -586,7 +622,11 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                 )
                 if wants_explain
                 else None,
-                "diagnostics": {"action": action, "model": result.get("model"), "size": size},
+                "diagnostics": {
+                    "action": action,
+                    "model": result.get("model"),
+                    "size": ((result.get("request") or {}).get("size") or size),
+                },
             }
 
         if action == "call_sora":
@@ -954,6 +994,29 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     # Implicit tool routing for clear image/video generation requests
                     if isinstance(user_message, str):
+                        if _is_allowed_image_sizes_question(user_message):
+                            sizes = _allowed_image_sizes_from_env()
+                            msg = _format_standard_reply(
+                                answer=f"Allowed image sizes: {', '.join(sizes)}",
+                                actions=["Reported configured/allowed image sizes"],
+                                next_steps=[
+                                    "Use one of these sizes when calling FLUX",
+                                    "If you need different sizes, set AZURE_OPENAI_ALLOWED_IMAGE_SIZES",
+                                ],
+                                assumptions=["You are generating images with FLUX via the app"],
+                            )
+                            await websocket.send_text(
+                                fast_json_dumps(
+                                    {
+                                        "type": "agent_response",
+                                        "agent": "System",
+                                        "message": msg,
+                                        "diagnostics": {"allowed_image_sizes": sizes},
+                                    }
+                                )
+                            )
+                            continue
+
                         inferred_action = _try_infer_action_from_user_message(user_message)
                         if inferred_action:
                             logger.info(
