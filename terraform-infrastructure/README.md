@@ -24,11 +24,11 @@ Last updated: 2026-01-07
 `E.g of Multi-region approach`:
 
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/6e09cd6a-9493-4afd-8145-eeb64136363a" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
+  <img src="https://github.com/user-attachments/assets/a6d68ba9-d6d3-44ec-a9d4-77380157b3ad" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
 </div>
 
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/412bbf8d-33bb-42db-ae02-7405b0a58785" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
+  <img src="https://github.com/user-attachments/assets/c816c30a-9d91-4ccc-8fdf-9b45970d648e" alt="Centered Image" style="border: 2px solid #4CAF50; border-radius: 5px; padding: 5px;"/>
 </div>
 
 > For example East US \& Sweden Central
