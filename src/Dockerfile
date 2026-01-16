@@ -16,6 +16,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY . .
 
+# Fail fast on syntax errors during image build (zero-touch validation via ACR build)
+RUN python -m compileall -q .
+
 # Expose port
 EXPOSE 8000
 

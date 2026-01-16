@@ -58,7 +58,7 @@ resource "azurerm_key_vault_access_policy" "deployment_identity_kv" {
   secret_permissions = ["Get", "List"]
 
   depends_on = [azurerm_key_vault.kv, time_sleep.wait_for_identity_propagation]
-  
+
   timeouts {
     create = "15m"
     update = "15m"
@@ -68,26 +68,28 @@ resource "azurerm_key_vault_access_policy" "deployment_identity_kv" {
 
 locals {
   # Use provided user_principal_id or default to current Azure CLI user
-  principal_id        = var.user_principal_id != null ? var.user_principal_id : data.azurerm_client_config.current.object_id
-  suffix              = substr(random_id.suffix.hex, 0, 8)
-  web_app_location    = coalesce(var.app_service_location, var.location)
-  storage_account     = lower(replace("${var.name_prefix}${local.suffix}sa", "-", ""))
+  principal_id     = var.user_principal_id != null ? var.user_principal_id : data.azurerm_client_config.current.object_id
+  suffix           = substr(random_id.suffix.hex, 0, 8)
+  web_app_location = coalesce(var.app_service_location, var.location)
+  storage_account  = lower(replace("${var.name_prefix}${local.suffix}sa", "-", ""))
+  # Azure AI Document Intelligence account name (must be globally unique and DNS-safe)
+  document_intelligence_account = lower(replace("${var.name_prefix}${local.suffix}di", "-", ""))
   # Model/region mapping (overrides loaded from JSON if present) - Media processing only
   model_regions_overrides = fileexists("${path.module}/${var.model_regions_file}") ? try(jsondecode(file("${path.module}/${var.model_regions_file}")).model_regions, {}) : {}
-  model_regions_final = merge(var.model_regions, local.model_regions_overrides)
-  model_regions_filtered      = { for k, v in local.model_regions_final : k => v if v != "unavailable" }
-  foundry_regions             = distinct(values(local.model_regions_filtered))
-  region_codes                = { for r in local.foundry_regions : lower(substr(replace(r, "-", ""), 0, 10)) => r }
-  foundry_region_codes        = { for r in local.foundry_regions : r => lower(substr(replace(r, "-", ""), 0, 10)) }
-  foundry_names               = { for r in local.foundry_regions : r => "aif-${local.foundry_region_codes[r]}-${local.suffix}" }
-  ai_project_names            = { for r in local.foundry_regions : r => "proj-${local.foundry_region_codes[r]}-${local.suffix}" }
-  app_service_plan            = "${var.name_prefix}-${local.suffix}-asp"
-  log_analytics_name          = "${var.name_prefix}-${local.suffix}-la"
-  app_insights_name           = "${var.name_prefix}-${local.suffix}-ai"
-  registry_name               = lower(replace("${var.name_prefix}${local.suffix}cosureg", "-", ""))
-  web_app_name                = "${var.name_prefix}-${local.suffix}-app"
-  key_vault_name              = "${var.name_prefix}-${local.suffix}-kv"
-  dockerfile_hash             = filesha256("../src/Dockerfile")
+  model_regions_final     = merge(var.model_regions, local.model_regions_overrides)
+  model_regions_filtered  = { for k, v in local.model_regions_final : k => v if v != "unavailable" }
+  foundry_regions         = distinct(values(local.model_regions_filtered))
+  region_codes            = { for r in local.foundry_regions : lower(substr(replace(r, "-", ""), 0, 10)) => r }
+  foundry_region_codes    = { for r in local.foundry_regions : r => lower(substr(replace(r, "-", ""), 0, 10)) }
+  foundry_names           = { for r in local.foundry_regions : r => "aif-${local.foundry_region_codes[r]}-${local.suffix}" }
+  ai_project_names        = { for r in local.foundry_regions : r => "proj-${local.foundry_region_codes[r]}-${local.suffix}" }
+  app_service_plan        = "${var.name_prefix}-${local.suffix}-asp"
+  log_analytics_name      = "${var.name_prefix}-${local.suffix}-la"
+  app_insights_name       = "${var.name_prefix}-${local.suffix}-ai"
+  registry_name           = lower(replace("${var.name_prefix}${local.suffix}cosureg", "-", ""))
+  web_app_name            = "${var.name_prefix}-${local.suffix}-app"
+  key_vault_name          = "${var.name_prefix}-${local.suffix}-kv"
+  dockerfile_hash         = filesha256("../src/Dockerfile")
 
   # Hash of application source & templates to trigger container rebuild when logic/UI changes
   # Combine Python files and HTML templates for source tracking
@@ -98,14 +100,14 @@ locals {
       ["app/templates/index.html"] # Explicitly include the HTML template
     ) : fileexists("../src/${f}") ? filesha256("../src/${f}") : ""
   ]))
-  
+
   # Track critical service files separately for explicit rebuild triggers
   critical_services_hash = sha256(join("", [
     fileexists("../src/main.py") ? filesha256("../src/main.py") : "",
     fileexists("../src/services/hybrid_agent_service.py") ? filesha256("../src/services/hybrid_agent_service.py") : "",
     fileexists("../src/services/image_service.py") ? filesha256("../src/services/image_service.py") : "",
   ]))
-  
+
   product_catalog_hash = fileexists("../src/data/updated_product_catalog(in).csv") ? filesha256("../src/data/updated_product_catalog(in).csv") : "missing"
 
   model_region_map         = local.model_regions_filtered
@@ -120,54 +122,54 @@ locals {
     # Sora: Multi-region availability with fallback
     "sora" = try(
       # Primary: Check if Sora is available in Sweden Central
-      contains(keys(local.model_regions_filtered), "sora") && local.model_regions_filtered["sora"] == "swedencentral" 
-        ? local.foundry_endpoints["swedencentral"]
-        # Fallback 1: Check if available in any other region
-        : contains(keys(local.model_regions_filtered), "sora") 
-          ? local.foundry_endpoints[local.model_regions_filtered["sora"]]
-          # Fallback 2: Check for Sora-2 availability
-          : contains(keys(local.model_regions_filtered), "sora-2")
-            ? local.foundry_endpoints[local.model_regions_filtered["sora-2"]]
-            # Fallback 3: Use alternative video generation capability (empty for now)
-            : "",
-      ""  # Ultimate fallback: empty endpoint
+      contains(keys(local.model_regions_filtered), "sora") && local.model_regions_filtered["sora"] == "swedencentral"
+      ? local.foundry_endpoints["swedencentral"]
+      # Fallback 1: Check if available in any other region
+      : contains(keys(local.model_regions_filtered), "sora")
+      ? local.foundry_endpoints[local.model_regions_filtered["sora"]]
+      # Fallback 2: Check for Sora-2 availability
+      : contains(keys(local.model_regions_filtered), "sora-2")
+      ? local.foundry_endpoints[local.model_regions_filtered["sora-2"]]
+      # Fallback 3: Use alternative video generation capability (empty for now)
+      : "",
+      "" # Ultimate fallback: empty endpoint
     )
-    
+
     # Model-router: Always prefer Sweden Central for orchestration
     "model-router" = try(
-      local.foundry_endpoints[local.model_regions_filtered["model-router"]], 
+      local.foundry_endpoints[local.model_regions_filtered["model-router"]],
       ""
     )
-    
+
     # GPT-4o: Multi-region selection
     "gpt-4o" = try(
-      local.foundry_endpoints[local.model_regions_filtered["gpt-4o"]], 
+      local.foundry_endpoints[local.model_regions_filtered["gpt-4o"]],
       ""
     )
-    
+
     # FLUX models: Region optimization
     "FLUX.2-pro" = try(
-      local.foundry_endpoints[local.model_regions_filtered["FLUX.2-pro"]], 
+      local.foundry_endpoints[local.model_regions_filtered["FLUX.2-pro"]],
       ""
     )
-    
+
     "FLUX.1-Kontext-pro" = try(
-      local.foundry_endpoints[local.model_regions_filtered["FLUX.1-Kontext-pro"]], 
+      local.foundry_endpoints[local.model_regions_filtered["FLUX.1-Kontext-pro"]],
       ""
     )
   }
 
   # AI-driven deployment readiness assessment
   sora_deployment_status = {
-    primary_region_available   = contains(keys(local.model_regions_filtered), "sora") && local.model_regions_filtered["sora"] == "swedencentral"
+    primary_region_available     = contains(keys(local.model_regions_filtered), "sora") && local.model_regions_filtered["sora"] == "swedencentral"
     alternative_region_available = contains(keys(local.model_regions_filtered), "sora") && local.model_regions_filtered["sora"] != "swedencentral"
-    sora2_available           = contains(keys(local.model_regions_filtered), "sora-2")
-    deployment_ready          = contains(keys(local.model_regions_filtered), "sora") || contains(keys(local.model_regions_filtered), "sora-2")
-    recommended_action        = contains(keys(local.model_regions_filtered), "sora") && local.model_regions_filtered["sora"] == "swedencentral" ? "deploy_sora_sweden" : contains(keys(local.model_regions_filtered), "sora") ? "deploy_sora_alternative_region" : contains(keys(local.model_regions_filtered), "sora-2") ? "deploy_sora2_fallback" : "request_sora_access"
+    sora2_available              = contains(keys(local.model_regions_filtered), "sora-2")
+    deployment_ready             = contains(keys(local.model_regions_filtered), "sora") || contains(keys(local.model_regions_filtered), "sora-2")
+    recommended_action           = contains(keys(local.model_regions_filtered), "sora") && local.model_regions_filtered["sora"] == "swedencentral" ? "deploy_sora_sweden" : contains(keys(local.model_regions_filtered), "sora") ? "deploy_sora_alternative_region" : contains(keys(local.model_regions_filtered), "sora-2") ? "deploy_sora2_fallback" : "request_sora_access"
   }
-  model_key_secret_map     = { for m, r in local.model_regions_filtered : m => local.foundry_key_secret_names[r] }
-  primary_foundry_region   = local.model_region_map["gpt-4o"]
-  
+  model_key_secret_map   = { for m, r in local.model_regions_filtered : m => local.foundry_key_secret_names[r] }
+  primary_foundry_region = local.model_region_map["gpt-4o"]
+
   # AI Project endpoints for Azure AI Projects SDK (agents API)
   ai_project_endpoints = { for r in local.foundry_regions : r => "https://${local.foundry_names[r]}.services.ai.azure.com/api/projects/${local.ai_project_names[r]}" }
 
@@ -205,6 +207,32 @@ resource "azapi_resource" "storage" {
   }
 }
 
+# Azure AI Document Intelligence (OCR for scanned PDFs)
+resource "azapi_resource" "document_intelligence" {
+  type                      = "Microsoft.CognitiveServices/accounts@2025-06-01"
+  name                      = local.document_intelligence_account
+  location                  = local.web_app_location
+  parent_id                 = azurerm_resource_group.rg.id
+  schema_validation_enabled = false
+
+  body = jsonencode({
+    sku  = { name = "S0" }
+    kind = "FormRecognizer"
+    properties = {
+      customSubDomainName = local.document_intelligence_account
+      publicNetworkAccess = "Enabled"
+      disableLocalAuth    = false
+      restore             = false
+    }
+  })
+
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "30m"
+  }
+}
+
 # AI Foundry accounts (one per required region) using AzAPI provider.
 resource "azapi_resource" "ai_foundry" {
   for_each                  = toset(local.foundry_regions)
@@ -223,10 +251,10 @@ resource "azapi_resource" "ai_foundry" {
       customSubDomainName    = local.foundry_names[each.key]
       disableLocalAuth       = false
       publicNetworkAccess    = "Enabled"
-      restore                = false  # Disable soft-delete - purge immediately when deleted
+      restore                = false # Disable soft-delete - purge immediately when deleted
     }
   })
-  
+
   timeouts {
     create = "30m"
     update = "30m"
@@ -241,19 +269,19 @@ resource "azapi_resource" "ai_project" {
   location                  = each.key
   parent_id                 = each.value.id
   schema_validation_enabled = false
-  
+
   depends_on = [
     azapi_resource.ai_foundry,
     time_sleep.wait_for_foundry_propagation
   ]
-  
+
   timeouts {
     create = "30m"
     update = "30m"
     delete = "30m"
   }
   identity { type = "SystemAssigned" }
-  body       = jsonencode({ properties = {} })
+  body = jsonencode({ properties = {} })
 }
 
 # Model Deployments in primary Foundry Hub
@@ -293,7 +321,7 @@ resource "azapi_resource" "flux_2_pro_deployment" {
     update = "30m"
     delete = "30m"
   }
-  
+
   lifecycle {
     ignore_changes = all
   }
@@ -414,13 +442,13 @@ resource "null_resource" "docker_image_build" {
     critical_services_hash = local.critical_services_hash
     requirements_hash      = fileexists("../src/requirements.txt") ? filesha256("../src/requirements.txt") : "missing"
     acr_id                 = azurerm_container_registry.acr.id
-    always_run             = timestamp() # Forces provisioner to run on every apply
+    always_run             = timestamp()     # Forces provisioner to run on every apply
     deployment_version     = "v2026.01.13.2" # Vision Analyst: coordinates via HTTPS
   }
 
   depends_on = [
     azurerm_container_registry.acr,
-    null_resource.verify_backend_fixes  # Ensures fixes are verified BEFORE building
+    null_resource.verify_backend_fixes # Ensures fixes are verified BEFORE building
   ]
 
   provisioner "local-exec" {
@@ -603,64 +631,87 @@ resource "azurerm_linux_web_app" "app" {
     AZURE_AI_AGENT_ENDPOINT              = local.ai_project_endpoints[local.primary_foundry_region]
     AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME = "model-router"
     AZURE_AI_FOUNDRY_API_KEY             = "MANAGED_IDENTITY"
-    
+
     # Inference endpoints for direct FLUX/Sora API access (added dynamically from terraform)
-    AZURE_AI_INFERENCE_ENDPOINT_SWEDEN   = "https://${local.foundry_names["swedencentral"]}.cognitiveservices.azure.com"
-    AZURE_AI_INFERENCE_ENDPOINT_WESTUS3  = contains(keys(local.foundry_names), "westus3") ? "https://${local.foundry_names["westus3"]}.cognitiveservices.azure.com" : "https://${local.foundry_names[local.primary_foundry_region]}.cognitiveservices.azure.com"
+    AZURE_AI_INFERENCE_ENDPOINT_SWEDEN  = "https://${local.foundry_names["swedencentral"]}.cognitiveservices.azure.com"
+    AZURE_AI_INFERENCE_ENDPOINT_WESTUS3 = contains(keys(local.foundry_names), "westus3") ? "https://${local.foundry_names["westus3"]}.cognitiveservices.azure.com" : "https://${local.foundry_names[local.primary_foundry_region]}.cognitiveservices.azure.com"
     # Azure context for newer AIProjectClient SDK
-    AZURE_SUBSCRIPTION_ID                = data.azurerm_client_config.current.subscription_id
-    AZURE_RESOURCE_GROUP                 = azurerm_resource_group.rg.name
-    AZURE_LOCATION                       = local.primary_foundry_region
+    AZURE_SUBSCRIPTION_ID = data.azurerm_client_config.current.subscription_id
+    AZURE_RESOURCE_GROUP  = azurerm_resource_group.rg.name
+    AZURE_LOCATION        = local.primary_foundry_region
 
     # MSFT Foundry OpenAI Configuration (media processing models)
-    AZURE_OPENAI_CHAT_DEPLOYMENT      = "model-router"
-    AZURE_OPENAI_IMAGE_DEPLOYMENT     = "FLUX.2-pro"
-    AZURE_OPENAI_API_VERSION          = "2024-08-01-preview"
+    AZURE_OPENAI_CHAT_DEPLOYMENT  = "model-router"
+    AZURE_OPENAI_IMAGE_DEPLOYMENT = "FLUX.2-pro"
+    # Use an image-capable API version for /images/generations endpoints.
+    # (Chat models can use gpt_api_version separately.)
+    AZURE_OPENAI_API_VERSION = "2024-02-01"
+
+    # Direct model APIs (FLUX images endpoint needs a newer preview api-version)
+    AZURE_OPENAI_IMAGES_API_VERSION = "2025-04-01-preview"
+    AZURE_OPENAI_SORA_API_VERSION   = "preview"
 
     # Default endpoint/key for image service (FLUX.2-pro region)
     AZURE_OPENAI_ENDPOINT = local.model_endpoints["FLUX.2-pro"]
     AZURE_OPENAI_API_KEY  = "MANAGED_IDENTITY"
 
     # Per-model endpoint and key mappings for media processing
-    AZURE_OPENAI_ENDPOINT_DALLE3                 = local.model_endpoints["FLUX.2-pro"]
-    AZURE_OPENAI_API_KEY_DALLE3                  = "MANAGED_IDENTITY"
-    AZURE_OPENAI_ENDPOINT_MODEL_ROUTER           = local.model_endpoints["model-router"]
-    AZURE_OPENAI_API_KEY_MODEL_ROUTER            = "MANAGED_IDENTITY"
-    AZURE_OPENAI_ENDPOINT_FLUX                   = local.model_endpoints["FLUX.2-pro"]
-    AZURE_OPENAI_API_KEY_FLUX                    = "MANAGED_IDENTITY"
-    AZURE_OPENAI_ENDPOINT_GPT_IMAGE              = local.model_endpoints["gpt-4o"]
-    AZURE_OPENAI_API_KEY_GPT_IMAGE               = "MANAGED_IDENTITY"
-    AZURE_OPENAI_ENDPOINT_SORA                   = local.model_endpoints["sora"]
-    AZURE_OPENAI_API_KEY_SORA                    = "MANAGED_IDENTITY"
+    AZURE_OPENAI_ENDPOINT_DALLE3       = local.model_endpoints["FLUX.2-pro"]
+    AZURE_OPENAI_API_KEY_DALLE3        = "MANAGED_IDENTITY"
+    AZURE_OPENAI_ENDPOINT_MODEL_ROUTER = local.model_endpoints["model-router"]
+    AZURE_OPENAI_API_KEY_MODEL_ROUTER  = "MANAGED_IDENTITY"
+    AZURE_OPENAI_ENDPOINT_FLUX         = local.model_endpoints["FLUX.2-pro"]
+    AZURE_OPENAI_API_KEY_FLUX          = "MANAGED_IDENTITY"
+    AZURE_OPENAI_ENDPOINT_GPT_IMAGE    = local.model_endpoints["gpt-4o"]
+    AZURE_OPENAI_API_KEY_GPT_IMAGE     = "MANAGED_IDENTITY"
+    AZURE_OPENAI_ENDPOINT_SORA         = local.model_endpoints["sora"]
+    AZURE_OPENAI_API_KEY_SORA          = "MANAGED_IDENTITY"
 
     # Storage Connection String via Key Vault
     STORAGE_CONNECTION_STRING = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/storage-connection-string)"
 
     # Multi-Agent Configuration - Use Azure OpenAI directly (no Agents API needed)
-    USE_MULTI_AGENT              = "true"
-    ENABLE_LOCAL_AGENT_FALLBACK   = "true"  # Use Azure OpenAI models directly without Agents API
-    
+    USE_MULTI_AGENT             = "true"
+    ENABLE_LOCAL_AGENT_FALLBACK = "true" # Use Azure OpenAI models directly without Agents API
+
     # Direct Azure OpenAI configuration for agent processing
-    gpt_endpoint                 = local.model_endpoints["gpt-4o"]
-    gpt_api_key                  = "MANAGED_IDENTITY"
-    gpt_deployment               = "model-router"
-    gpt_api_version              = "2024-08-01-preview"
-    
+    gpt_endpoint    = local.model_endpoints["gpt-4o"]
+    gpt_api_key     = "MANAGED_IDENTITY"
+    gpt_deployment  = "model-router"
+    gpt_api_version = "2024-08-01-preview"
+
     # Model-specific endpoints for specialized agents (AI-validated)
-    DALLE3_ENDPOINT              = local.model_endpoints["FLUX.2-pro"]
-    FLUX_ENDPOINT                = local.model_endpoints["FLUX.2-pro"]
-    GPT_IMAGE_ENDPOINT           = local.model_endpoints["gpt-4o"]
-    SORA_ENDPOINT                = local.ai_models["sora"]
+    DALLE3_ENDPOINT    = local.model_endpoints["FLUX.2-pro"]
+    FLUX_ENDPOINT      = local.model_endpoints["FLUX.2-pro"]
+    GPT_IMAGE_ENDPOINT = local.model_endpoints["gpt-4o"]
+    SORA_ENDPOINT      = local.ai_models["sora"]
 
     # Application Insights via Key Vault
     APPLICATION_INSIGHTS_CONNECTION_STRING = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/app-insights-connection-string)"
 
     CUSTOMER_ID = "CUST001"
+
+    # File + OCR settings
+    MAX_UPLOAD_BYTES                        = tostring(200 * 1024 * 1024)
+    MAX_DOCUMENT_CHARS                      = "40000"
+    AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT    = "https://${local.document_intelligence_account}.cognitiveservices.azure.com/"
+    AZURE_DOCUMENT_INTELLIGENCE_API_VERSION = "2023-07-31"
   }
 
   depends_on = [
     azurerm_container_registry.acr,
     null_resource.docker_image_build
+  ]
+}
+
+# Allow the Web App managed identity to call Document Intelligence using AAD.
+resource "azurerm_role_assignment" "app_document_intelligence_user" {
+  scope                = azapi_resource.document_intelligence.id
+  role_definition_name = "Cognitive Services User"
+  principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
+  depends_on = [
+    azurerm_linux_web_app.app,
+    azapi_resource.document_intelligence
   ]
 }
 
@@ -678,10 +729,10 @@ resource "azurerm_role_assignment" "app_foundry_user" {
 
 # Grant Web App access to AI Foundry services (required for Agents API)
 resource "azurerm_role_assignment" "app_ai_foundry_user" {
-  for_each           = azapi_resource.ai_foundry
-  scope              = each.value.id
+  for_each             = azapi_resource.ai_foundry
+  scope                = each.value.id
   role_definition_name = "Azure AI User"
-  principal_id       = azurerm_linux_web_app.app.identity[0].principal_id
+  principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
   depends_on = [
     azurerm_linux_web_app.app,
     azapi_resource.ai_foundry
@@ -690,10 +741,10 @@ resource "azurerm_role_assignment" "app_ai_foundry_user" {
 
 # Grant Web App access to AI Projects (required for Agents API)
 resource "azurerm_role_assignment" "app_ai_project_user" {
-  for_each           = toset(local.foundry_regions)
-  scope              = azapi_resource.ai_project[each.key].id
+  for_each             = toset(local.foundry_regions)
+  scope                = azapi_resource.ai_project[each.key].id
   role_definition_name = "Azure AI User"
-  principal_id       = azurerm_linux_web_app.app.identity[0].principal_id
+  principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
   depends_on = [
     azurerm_linux_web_app.app,
     azapi_resource.ai_project
@@ -713,14 +764,14 @@ resource "azurerm_role_assignment" "webapp_acr_pull" {
 
 # Key Vault for central secret management
 resource "azurerm_key_vault" "kv" {
-  name                       = local.key_vault_name
-  location                   = azurerm_resource_group.rg.location
-  resource_group_name        = azurerm_resource_group.rg.name
-  tenant_id                  = data.azurerm_client_config.current.tenant_id
-  sku_name                   = "standard"
-  soft_delete_retention_days = 7
-  purge_protection_enabled   = false
-  enable_rbac_authorization  = false
+  name                          = local.key_vault_name
+  location                      = azurerm_resource_group.rg.location
+  resource_group_name           = azurerm_resource_group.rg.name
+  tenant_id                     = data.azurerm_client_config.current.tenant_id
+  sku_name                      = "standard"
+  soft_delete_retention_days    = 7
+  purge_protection_enabled      = false
+  enable_rbac_authorization     = false
   public_network_access_enabled = true
 
   network_acls {
@@ -743,13 +794,13 @@ resource "azurerm_key_vault" "kv" {
 
 # Wait for Key Vault to be ready and accessible
 resource "time_sleep" "wait_for_kv" {
-  depends_on = [azurerm_key_vault.kv]
+  depends_on      = [azurerm_key_vault.kv]
   create_duration = "30s"
 }
 
 # Current public IP (for Key Vault firewall)
 data "http" "current_ip" {
-  url            = "https://api.ipify.org"
+  url = "https://api.ipify.org"
 }
 
 # Ensure Key Vault firewall is OPEN for Terraform operations
@@ -758,7 +809,7 @@ resource "null_resource" "ensure_kv_open" {
   triggers = {
     always_run = timestamp()
   }
-  
+
   depends_on = [azurerm_key_vault.kv]
 
   provisioner "local-exec" {
@@ -790,11 +841,11 @@ resource "null_resource" "kv_network_rules" {
   ]
 
   triggers = {
-    kv_name            = azurerm_key_vault.kv.name
-    rg_name            = azurerm_resource_group.rg.name
-    current_ip         = chomp(data.http.current_ip.response_body)
-    outbound_ips       = data.azurerm_linux_web_app.app_identity.outbound_ip_addresses
-    lock_kv_firewall   = tostring(var.lock_key_vault_network)
+    kv_name          = azurerm_key_vault.kv.name
+    rg_name          = azurerm_resource_group.rg.name
+    current_ip       = chomp(data.http.current_ip.response_body)
+    outbound_ips     = data.azurerm_linux_web_app.app_identity.outbound_ip_addresses
+    lock_kv_firewall = tostring(var.lock_key_vault_network)
   }
 
   provisioner "local-exec" {
@@ -845,11 +896,11 @@ resource "azurerm_key_vault_access_policy" "app_policy" {
   tenant_id          = data.azurerm_client_config.current.tenant_id
   object_id          = data.azurerm_linux_web_app.app_identity.identity[0].principal_id
   secret_permissions = ["Get"]
-  depends_on         = [
+  depends_on = [
     azurerm_linux_web_app.app,
     null_resource.ensure_kv_open
   ]
-  
+
   timeouts {
     create = "5m"
     update = "5m"
@@ -873,7 +924,7 @@ resource "azurerm_key_vault_secret" "storage_connection_string" {
   name         = "storage-connection-string"
   value        = "DefaultEndpointsProtocol=https;AccountName=${local.storage_account};AccountKey=${jsondecode(data.azapi_resource_action.storage_keys_unconditional.output).keys[0].value};EndpointSuffix=core.windows.net"
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [
+  depends_on = [
     azurerm_key_vault.kv,
     data.azapi_resource_action.storage_keys_unconditional,
     null_resource.ensure_kv_open,
@@ -891,14 +942,14 @@ resource "azurerm_key_vault_secret" "agent_orchestrator_id" {
   name         = "agent-orchestrator-id"
   value        = "backup-orchestrator-${random_id.suffix.hex}"
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [
+  depends_on = [
     azurerm_key_vault_access_policy.deployment_identity_kv,
     null_resource.ensure_kv_open,
     data.external.ensure_kv_access
   ]
-  
+
   lifecycle {
-    ignore_changes = [value]  # Don't overwrite if real agent deployment succeeds
+    ignore_changes = [value] # Don't overwrite if real agent deployment succeeds
   }
 }
 
@@ -906,12 +957,12 @@ resource "azurerm_key_vault_secret" "agent_cropping_agent_id" {
   name         = "agent-cropping-agent-id"
   value        = "backup-cropping-${random_id.suffix.hex}"
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [
+  depends_on = [
     azurerm_key_vault_access_policy.deployment_identity_kv,
     null_resource.ensure_kv_open,
     data.external.ensure_kv_access
   ]
-  
+
   lifecycle {
     ignore_changes = [value]
   }
@@ -921,12 +972,12 @@ resource "azurerm_key_vault_secret" "agent_visual_content_agent_id" {
   name         = "agent-visual-content-agent-id"
   value        = "backup-visual-content-${random_id.suffix.hex}"
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [
+  depends_on = [
     azurerm_key_vault_access_policy.deployment_identity_kv,
     null_resource.ensure_kv_open,
     data.external.ensure_kv_access
   ]
-  
+
   lifecycle {
     ignore_changes = [value]
   }
@@ -936,12 +987,12 @@ resource "azurerm_key_vault_secret" "agent_document_agent_id" {
   name         = "agent-document-agent-id"
   value        = "backup-document-${random_id.suffix.hex}"
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [
+  depends_on = [
     azurerm_key_vault_access_policy.deployment_identity_kv,
     null_resource.ensure_kv_open,
     data.external.ensure_kv_access
   ]
-  
+
   lifecycle {
     ignore_changes = [value]
   }
@@ -950,12 +1001,12 @@ resource "azurerm_key_vault_secret" "agent_document_agent_id" {
 # Zero-touch automation: AI project creation and recovery
 resource "null_resource" "ai_project_recovery" {
   count = var.enable_multi_agent ? 1 : 0
-  
+
   triggers = {
     ai_foundry_id = azapi_resource.ai_foundry[local.primary_foundry_region].id
     always_run    = timestamp()
   }
-  
+
   provisioner "local-exec" {
     command = <<-EOT
       Write-Host "[AI PROJECT SETUP] Setting up Azure AI project for zero-touch deployment..."
@@ -1058,10 +1109,10 @@ resource "null_resource" "ai_project_recovery" {
       
       Write-Host "[AI PROJECT SETUP] Azure automation complete"
     EOT
-    
+
     interpreter = ["PowerShell", "-Command"]
   }
-  
+
   depends_on = [
     azapi_resource.ai_foundry,
     azurerm_key_vault_access_policy.deployment_identity_kv,
@@ -1074,11 +1125,11 @@ resource "azurerm_key_vault_secret" "agent_video_agent_id" {
   name         = "agent-video-agent-id"
   value        = "backup-video-${random_id.suffix.hex}"
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [
+  depends_on = [
     azurerm_key_vault_access_policy.deployment_identity_kv,
     data.external.ensure_kv_access
   ]
-  
+
   lifecycle {
     ignore_changes = [value]
   }
@@ -1088,7 +1139,7 @@ resource "azurerm_key_vault_secret" "agent_endpoint" {
   name         = "agent-endpoint"
   value        = local.ai_project_endpoints[local.primary_foundry_region]
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [
+  depends_on = [
     azurerm_key_vault.kv,
     data.external.ensure_kv_access
   ]
@@ -1097,15 +1148,15 @@ resource "azurerm_key_vault_secret" "agent_endpoint" {
 # Zero-touch deployment: AI project status tracking
 resource "azurerm_key_vault_secret" "ai_project_status" {
   name         = "ai-project-status"
-  value        = "pending"  # Will be updated to 'created' or 'failed' by automation
+  value        = "pending" # Will be updated to 'created' or 'failed' by automation
   key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [
+  depends_on = [
     azurerm_key_vault_access_policy.deployment_identity_kv,
     data.external.ensure_kv_access
   ]
-  
+
   lifecycle {
-    ignore_changes = [value]  # Allow automation to update this value
+    ignore_changes = [value] # Allow automation to update this value
   }
 }
 
@@ -1180,7 +1231,7 @@ resource "azurerm_monitor_autoscale_setting" "appservice_autoscale" {
 
 # Alerts: App Service 5xx & CPU, Cosmos 429 throttles
 resource "azurerm_monitor_metric_alert" "app_5xx" {
-  count = 0  # Temporarily disabled due to conflicts
+  count               = 0 # Temporarily disabled due to conflicts
   name                = "${var.name_prefix}-${local.suffix}-app-5xx-alert"
   resource_group_name = azurerm_resource_group.rg.name
   scopes              = [azurerm_linux_web_app.app.id]
@@ -1325,10 +1376,10 @@ resource "azurerm_role_assignment" "storage_blob_data_contributor_foundry" {
 # Azure AI Model Validation & Deployment
 resource "null_resource" "model_validation" {
   count = var.enable_ai_automation ? 1 : 0
-  
+
   triggers = {
-    model_regions = jsonencode(var.model_regions)
-    foundry_ids   = jsonencode({ for k, v in azapi_resource.ai_foundry : k => v.id })
+    model_regions        = jsonencode(var.model_regions)
+    foundry_ids          = jsonencode({ for k, v in azapi_resource.ai_foundry : k => v.id })
     validation_timestamp = timestamp()
   }
 
@@ -1349,7 +1400,7 @@ resource "null_resource" "model_validation" {
       $subscriptionId = "${data.azurerm_client_config.current.subscription_id}"
       $currentTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
-      Write-Host "🧠 Starting AI-powered model availability validation..." -ForegroundColor Green
+      Write-Host "Starting AI-powered model availability validation..." -ForegroundColor Green
       Write-Host "   Subscription: $subscriptionId" -ForegroundColor Gray
       Write-Host "   Validation Time: $currentTime" -ForegroundColor Gray
       Write-Host ""
@@ -1508,7 +1559,7 @@ if __name__ == '__main__':
       Write-Host "=" * 60 -ForegroundColor Green
       Write-Host ""
     EOT
-    
+
     interpreter = ["PowerShell", "-Command"]
     working_dir = path.module
   }
@@ -1538,7 +1589,7 @@ resource "null_resource" "ai_model_deployments" {
       Start-Sleep -Seconds 15
 
       $modelSpecs = ConvertFrom-Json @'
-${replace(jsonencode(local.model_deployment_payload[each.key]),"'","''")}
+${replace(jsonencode(local.model_deployment_payload[each.key]), "'", "''")}
 '@
 
       foreach ($spec in $modelSpecs) {
@@ -1606,8 +1657,8 @@ resource "time_sleep" "wait_for_foundry_propagation" {
   depends_on = [
     azapi_resource.ai_foundry
   ]
-  
-  create_duration = "60s"  # Wait 1 minute for resources to be fully available
+
+  create_duration = "60s" # Wait 1 minute for resources to be fully available
 }
 
 # Connection helper actions for Foundry resources
@@ -1739,9 +1790,9 @@ resource "null_resource" "verify_connections" {
 # Multi-Agent Deployment - Create agents using NEW Agents API (2.0.0b1+)
 # Deploy agents per region/project
 resource "null_resource" "deploy_multi_agents_per_region" {
-  for_each = var.enable_multi_agent ? { 
-    for region, agents in var.agent_region_assignments : region => agents 
-    if length(agents) > 0  # Only deploy to regions with agents configured
+  for_each = var.enable_multi_agent ? {
+    for region, agents in var.agent_region_assignments : region => agents
+    if length(agents) > 0 # Only deploy to regions with agents configured
   } : {}
 
   depends_on = [
@@ -1844,13 +1895,13 @@ resource "null_resource" "deploy_multi_agents_per_region" {
   }
 
   triggers = {
-    ai_foundry_id = values(azapi_resource.ai_foundry)[0].id
-    ai_project_id = values(azapi_resource.ai_project)[0].id
+    ai_foundry_id     = values(azapi_resource.ai_foundry)[0].id
+    ai_project_id     = values(azapi_resource.ai_project)[0].id
     agent_script_hash = filemd5("${path.module}/../src/app/agents/deploy_azure_agents.py")
     agent_config_hash = md5(jsonencode(var.agent_model_assignments))
     agent_region_hash = md5(jsonencode(var.agent_region_assignments))
     model_deployments = md5(jsonencode([for model in null_resource.ai_model_deployments : model.id]))
-    timestamp = timestamp()
+    timestamp         = timestamp()
   }
 }
 
@@ -2187,10 +2238,10 @@ resource "null_resource" "webapp_container_restart" {
   ]
 
   triggers = {
-    docker_image_id     = null_resource.docker_image_build.id
-    agent_orchestrator  = azurerm_key_vault_secret.agent_orchestrator_id.id
-    agent_video         = azurerm_key_vault_secret.agent_video_agent_id.id
-    always_run          = timestamp()
+    docker_image_id    = null_resource.docker_image_build.id
+    agent_orchestrator = azurerm_key_vault_secret.agent_orchestrator_id.id
+    agent_video        = azurerm_key_vault_secret.agent_video_agent_id.id
+    always_run         = timestamp()
   }
 }
 
@@ -2213,7 +2264,7 @@ resource "azurerm_monitor_action_group" "a2a_alerts" {
 
 # A2A System Health Alert
 resource "azurerm_monitor_metric_alert" "a2a_system_health" {
-  count = 0  # Temporarily disabled due to conflicts
+  count = 0 # Temporarily disabled due to conflicts
 
   name                = "${local.web_app_name}-a2a-health"
   resource_group_name = azurerm_resource_group.rg.name
@@ -2240,7 +2291,7 @@ resource "azurerm_monitor_metric_alert" "a2a_system_health" {
 
 # A2A Performance Alert  
 resource "azurerm_monitor_metric_alert" "a2a_performance" {
-  count = 0  # Temporarily disabled due to conflicts
+  count = 0 # Temporarily disabled due to conflicts
 
   name                = "${local.web_app_name}-a2a-performance"
   resource_group_name = azurerm_resource_group.rg.name
@@ -2268,7 +2319,7 @@ resource "azurerm_monitor_metric_alert" "a2a_performance" {
 # Comprehensive A2A Framework Deployment Validation
 resource "null_resource" "a2a_deployment_validation" {
   count = var.enable_a2a_automation ? 1 : 0
-  
+
   depends_on = [
     azurerm_linux_web_app.app,
     azurerm_key_vault.kv,
@@ -2407,14 +2458,14 @@ resource "null_resource" "a2a_deployment_validation" {
       Write-Host "============================================================================"
       Write-Host ""
     EOT
-    
+
     interpreter = ["PowerShell", "-Command"]
     working_dir = path.module
   }
-  
+
   triggers = {
-    app_id = azurerm_linux_web_app.app.id
-    kv_id = azurerm_key_vault.kv.id
+    app_id     = azurerm_linux_web_app.app.id
+    kv_id      = azurerm_key_vault.kv.id
     always_run = timestamp()
   }
 }
