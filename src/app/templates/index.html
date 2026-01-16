@@ -20,6 +20,24 @@
             align-items: center;
             color: #333;
         }
+
+        input,
+        button,
+        select,
+        textarea {
+            font-family: inherit;
+        }
+
+        pre,
+        code,
+        kbd,
+        samp {
+            font-family: inherit;
+        }
+
+        pre {
+            white-space: pre-wrap;
+        }
         
         .chat-container {
             width: 90%;
@@ -340,6 +358,24 @@
         let currentFile = null; // { name, content_type, size_bytes, url, is_image }
         const inflightMessages = new Map(); // message_id -> { rawText, messageDiv, contentDiv }
 
+        const SYSTEM_WELCOME_HTML = `
+            Welcome to Zava Media AI, your intelligent creative assistant powered by Azure AI Foundry.
+            <br><br>
+            <strong>I can help you with:</strong>
+            <ul style="margin-left: 20px; margin-top: 5px;">
+                <li><strong>Image Generation:</strong> Create stunning thumbnails and visuals</li>
+                <li><strong>Object Detection & Cropping:</strong> Intelligently crop objects or subjects</li>
+                <li><strong>Background Transformation:</strong> Remove or replace backgrounds seamlessly</li>
+                <li><strong>Video Generation:</strong> Create engaging video content with Sora</li>
+                <li><strong>Document Processing:</strong> Extract and analyze content from PDFs and documents</li>
+                <li><strong>Visual Enhancement:</strong> Optimize and enhance your media assets</li>
+            </ul>
+            <br>
+            <strong>Powered by:</strong> Azure OpenAI Model Router (18 AI models), GPT-4o Vision, FLUX.2-pro, Sora, and FLUX.1-Kontext-pro
+            <br><br>
+            Upload an image, paste a document, or describe what you'd like to create to get started.
+        `;
+
         function connectWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
@@ -467,7 +503,12 @@
             return { mainText, explainAnswer: bullets.join('\n') };
         }
 
-        function renderMessageContent(contentDiv, text, imageData = null, videoUrl = null, explanation = null, answerExplanation = null, references = null, diagnostics = null) {
+        function renderMessageContent(contentDiv, text, imageData = null, videoUrl = null, explanation = null, answerExplanation = null, references = null, diagnostics = null, messageFormat = null) {
+            if (messageFormat === 'system_welcome') {
+                contentDiv.innerHTML = SYSTEM_WELCOME_HTML;
+                return;
+            }
+
             let html = formatText(text);
 
             if (imageData) {
@@ -519,7 +560,6 @@
             const contentDiv = document.createElement('div');
             contentDiv.className = 'message-content';
             contentDiv.style.whiteSpace = 'pre-wrap';
-            contentDiv.style.fontFamily = 'monospace';
             contentDiv.innerHTML = '<span style="opacity:0.75; font-style: italic;">Thinking…</span>';
 
             messageDiv.appendChild(contentDiv);
@@ -555,7 +595,7 @@
 
             entry.rawText = String(data.message ?? entry.rawText);
             const split = splitExplainAnswerSection(entry.rawText);
-            renderMessageContent(entry.contentDiv, split.mainText, data.image_data, data.video_url, data.explanation, split.explainAnswer, data.references, data.diagnostics);
+            renderMessageContent(entry.contentDiv, split.mainText, data.image_data, data.video_url, data.explanation, split.explainAnswer, data.references, data.diagnostics, data.format);
             inflightMessages.delete(messageId);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
@@ -569,13 +609,13 @@
                 html += `<div class="agent-badge">${agentName}</div>`;
             }
             
-            html += `<div class="message-content" style="white-space: pre-wrap; font-family: monospace;"></div>`;
+            html += `<div class="message-content" style="white-space: pre-wrap;"></div>`;
             
             messageDiv.innerHTML = html;
             messagesDiv.appendChild(messageDiv);
 
             const contentDiv = messageDiv.querySelector('.message-content');
-            renderMessageContent(contentDiv, text, imageData, videoUrl, explanation, answerExplanation, references, diagnostics);
+            renderMessageContent(contentDiv, text, imageData, videoUrl, explanation, answerExplanation, references, diagnostics, null);
 
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
