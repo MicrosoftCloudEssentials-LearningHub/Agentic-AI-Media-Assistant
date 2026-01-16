@@ -40,7 +40,7 @@ variable "user_principal_id" {
 }
 
 variable "agent_model_assignments" {
-  type = map(string)
+  type        = map(string)
   description = "Map of agent environment variable names to their assigned model deployments"
   default = {
     orchestrator         = "model-router"
@@ -52,7 +52,7 @@ variable "agent_model_assignments" {
 }
 
 variable "agent_region_assignments" {
-  type = map(list(string))
+  type        = map(list(string))
   description = "Map of regions to list of agents to deploy in that region"
   default = {
     swedencentral = ["orchestrator", "cropping_agent", "video_agent", "document_agent"]
@@ -61,7 +61,7 @@ variable "agent_region_assignments" {
 }
 
 variable "model_regions" {
-  type = map(string)
+  type        = map(string)
   description = "Map of model names to their deployment regions"
   default = {
     "model-router"       = "swedencentral"

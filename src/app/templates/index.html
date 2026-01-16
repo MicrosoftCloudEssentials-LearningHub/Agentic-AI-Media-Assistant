@@ -39,6 +39,30 @@
             padding: 20px;
             text-align: center;
             border-bottom: 1px solid #444;
+            position: relative;
+        }
+
+        .header-links {
+            position: absolute;
+            top: 12px;
+            right: 16px;
+            display: flex;
+            gap: 10px;
+            font-size: 12px;
+        }
+
+        .header-links a {
+            color: #aaa;
+            text-decoration: none;
+            border: 1px solid #444;
+            padding: 6px 10px;
+            border-radius: 8px;
+            background: #1e1e1e;
+        }
+
+        .header-links a:hover {
+            color: white;
+            border-color: #666;
         }
         
         .chat-header h1 {
@@ -117,6 +141,13 @@
         }
 
         .message-image {
+            max-width: 100%;
+            border-radius: 8px;
+            margin-top: 10px;
+            border: 1px solid #444;
+        }
+
+        .message-video {
             max-width: 100%;
             border-radius: 8px;
             margin-top: 10px;
@@ -240,6 +271,10 @@
 <body>
     <div class="chat-container">
         <div class="chat-header">
+            <div class="header-links">
+                <a href="/diagnostics" target="_blank" rel="noopener noreferrer">Diagnostics</a>
+                <a href="/health" target="_blank" rel="noopener noreferrer">Health</a>
+            </div>
             <h1>Zava Media AI Assistant</h1>
             <p>Advanced Image Processing & Video Thumbnail Generation</p>
         </div>
@@ -271,10 +306,18 @@
                 <div class="remove-image" onclick="clearImage()">×</div>
             </div>
             <div class="input-controls">
-                <label for="file-input" class="file-input-label" title="Upload Image">
+                <label for="file-input" class="file-input-label" title="Upload File">
                     📷
                 </label>
-                <input type="file" id="file-input" accept="image/*" style="display: none;">
+                <input type="file" id="file-input" accept="*/*" style="display: none;">
+                <label title="Include a short explanation" style="display:flex; align-items:center; gap:6px; padding: 0 8px; color:#aaa; font-size: 12px;">
+                    <input type="checkbox" id="explain-toggle" style="margin:0;">
+                    Explain
+                </label>
+                <label title="Explain the answer in 3 bullets (post-hoc, not internal reasoning)" style="display:flex; align-items:center; gap:6px; padding: 0 8px; color:#aaa; font-size: 12px;">
+                    <input type="checkbox" id="explain-answer-toggle" style="margin:0;">
+                    Explain answer
+                </label>
                 <input type="text" id="user-input" placeholder="Type your request here... (Ctrl+V to paste image)">
                 <button onclick="sendMessage()">Send</button>
             </div>
@@ -290,8 +333,12 @@
         const fileInput = document.getElementById('file-input');
         const previewContainer = document.getElementById('preview-container');
         const imagePreview = document.getElementById('image-preview');
+        const explainToggle = document.getElementById('explain-toggle');
+        const explainAnswerToggle = document.getElementById('explain-answer-toggle');
         
         let currentImageData = null;
+        let currentFile = null; // { name, content_type, size_bytes, url, is_image }
+        const inflightMessages = new Map(); // message_id -> { rawText, messageDiv, contentDiv }
 
         function connectWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -305,10 +352,15 @@
             
             ws.onmessage = function(event) {
                 const data = JSON.parse(event.data);
-                if (data.type === 'agent_response') {
-                    addMessage(data.message, 'assistant', data.agent, data.image_data, data.diagnostics);
+                if (data.type === 'agent_start') {
+                    startStreamingMessage(data.message_id, data.agent);
+                } else if (data.type === 'agent_delta') {
+                    appendDelta(data.message_id, data.delta);
+                } else if (data.type === 'agent_response') {
+                    finalizeStreamingMessage(data);
                 } else if (data.type === 'error') {
-                    addMessage(data.message, 'assistant', 'Error', null, data.diagnostics);
+                    const split = splitExplainAnswerSection(data.message);
+                    addMessage(split.mainText, 'assistant', 'Error', null, null, data.explanation, split.explainAnswer, data.references, data.diagnostics);
                 }
             };
             
@@ -332,7 +384,183 @@
         // Initialize WebSocket connection
         connectWebSocket();
 
-        function addMessage(text, sender, agentName = null, imageData = null, diagnostics = null) {
+        function linkifyEscapedHtml(html) {
+            // Input is already HTML-escaped. Only convert http(s) links to anchors.
+            const urlRe = /(https?:\/\/[^\s<]+)(?=\s|<|$)/g;
+            return String(html ?? '').replace(urlRe, function(match) {
+                // Avoid including trailing punctuation.
+                let url = match;
+                while (/[),.;:!?]$/.test(url)) {
+                    url = url.slice(0, -1);
+                }
+                const suffix = match.slice(url.length);
+                const href = url;
+                return `<a href="${href}" target="_blank" rel="noopener noreferrer">${url}</a>${suffix}`;
+            });
+        }
+
+        function formatText(text) {
+            const safe = escapeHtml(String(text ?? ''));
+            const withBreaks = safe.replace(/\n/g, '<br>').replace(/  /g, '&nbsp;&nbsp;');
+            return linkifyEscapedHtml(withBreaks);
+        }
+
+        function formatReferences(references) {
+            if (references == null) return null;
+            if (Array.isArray(references)) {
+                return references.map((r) => {
+                    if (typeof r === 'string') return r;
+                    if (r && typeof r === 'object') {
+                        const prefix = r.type ? `${r.type}: ` : '';
+                        const value = (r.value != null) ? r.value : (r.url != null ? r.url : JSON.stringify(r));
+                        return `${prefix}${String(value)}`;
+                    }
+                    return String(r);
+                }).join('\n');
+            }
+            if (typeof references === 'object') return JSON.stringify(references, null, 2);
+            return String(references);
+        }
+
+        function splitExplainAnswerSection(text) {
+            const raw = String(text ?? '');
+            // Expected appended format:
+            //\n\nExplain answer (3 bullets)\n- ...\n- ...\n- ...
+            const marker = /\n\s*Explain answer \(3 bullets\)\s*\n/i;
+            const match = marker.exec(raw);
+            if (!match || match.index < 0) {
+                return { mainText: raw, explainAnswer: null };
+            }
+
+            const mainText = raw.slice(0, match.index).trimEnd();
+
+            // Parse strictly: require exactly 3 bullet lines and no extra non-empty content.
+            const after = raw.slice(match.index + match[0].length);
+            const lines = after.split(/\r?\n/);
+
+            // Skip leading empty lines
+            let i = 0;
+            while (i < lines.length && lines[i].trim() === '') i++;
+
+            const bullets = [];
+            while (i < lines.length) {
+                const line = lines[i];
+                if (/^\s*-\s+/.test(line)) {
+                    bullets.push(line.trim());
+                    i++;
+                    continue;
+                }
+                break;
+            }
+
+            // Allow trailing blank lines only.
+            while (i < lines.length && lines[i].trim() === '') i++;
+
+            if (bullets.length !== 3) {
+                return { mainText: raw, explainAnswer: null };
+            }
+            if (i < lines.length) {
+                // Extra content after the bullets; don't split.
+                return { mainText: raw, explainAnswer: null };
+            }
+
+            return { mainText, explainAnswer: bullets.join('\n') };
+        }
+
+        function renderMessageContent(contentDiv, text, imageData = null, videoUrl = null, explanation = null, answerExplanation = null, references = null, diagnostics = null) {
+            let html = formatText(text);
+
+            if (imageData) {
+                const imgSrc = String(imageData);
+                html += `<br><img src="${imgSrc}" class="message-image">`;
+                html += `<br><a href="${imgSrc}" download="image.png" class="download-btn">Download Image</a>`;
+            }
+
+            if (videoUrl) {
+                const v = encodeURI(String(videoUrl));
+                html += `<br><video controls src="${v}" class="message-video"></video>`;
+                html += `<br><a href="${v}" download="video.mp4" class="download-btn">Download Video</a>`;
+            }
+
+            if (explanation) {
+                html += `<br><br><details style="font-size: 11px; opacity: 0.85;"><summary>Explanation</summary><pre>${escapeHtml(typeof explanation === 'string' ? explanation : JSON.stringify(explanation, null, 2))}</pre></details>`;
+            }
+
+            if (answerExplanation) {
+                html += `<br><br><details style="font-size: 11px; opacity: 0.85;"><summary>Explain answer (3 bullets)</summary><pre>${escapeHtml(String(answerExplanation))}</pre></details>`;
+            }
+
+            const refsText = formatReferences(references);
+            if (refsText) {
+                html += `<br><br><details style="font-size: 11px; opacity: 0.85;"><summary>References</summary><pre>${linkifyEscapedHtml(escapeHtml(refsText))}</pre></details>`;
+            }
+
+            if (diagnostics) {
+                html += `<br><br><details style="font-size: 11px; opacity: 0.7;"><summary>Diagnostic Details</summary><pre>${linkifyEscapedHtml(escapeHtml(JSON.stringify(diagnostics, null, 2)))}</pre></details>`;
+            }
+
+            contentDiv.innerHTML = html;
+        }
+
+        function startStreamingMessage(messageId, agentName = null) {
+            if (!messageId) return;
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message assistant`;
+            messageDiv.dataset.messageId = messageId;
+
+            if (agentName) {
+                const badge = document.createElement('div');
+                badge.className = 'agent-badge';
+                badge.textContent = agentName;
+                messageDiv.appendChild(badge);
+            }
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.style.whiteSpace = 'pre-wrap';
+            contentDiv.style.fontFamily = 'monospace';
+            contentDiv.innerHTML = '<span style="opacity:0.75; font-style: italic;">Thinking…</span>';
+
+            messageDiv.appendChild(contentDiv);
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+            inflightMessages.set(messageId, { rawText: '', messageDiv, contentDiv, sawDelta: false });
+        }
+
+        function appendDelta(messageId, delta) {
+            if (!messageId) return;
+            const entry = inflightMessages.get(messageId);
+            if (!entry) return;
+
+            if (!entry.sawDelta) {
+                entry.sawDelta = true;
+            }
+
+            entry.rawText += String(delta ?? '');
+            renderMessageContent(entry.contentDiv, entry.rawText);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function finalizeStreamingMessage(data) {
+            const messageId = data.message_id;
+            const entry = messageId ? inflightMessages.get(messageId) : null;
+
+            if (!entry) {
+                const split = splitExplainAnswerSection(data.message);
+                addMessage(split.mainText, 'assistant', data.agent, data.image_data, data.video_url, data.explanation, split.explainAnswer, data.references, data.diagnostics);
+                return;
+            }
+
+            entry.rawText = String(data.message ?? entry.rawText);
+            const split = splitExplainAnswerSection(entry.rawText);
+            renderMessageContent(entry.contentDiv, split.mainText, data.image_data, data.video_url, data.explanation, split.explainAnswer, data.references, data.diagnostics);
+            inflightMessages.delete(messageId);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function addMessage(text, sender, agentName = null, imageData = null, videoUrl = null, explanation = null, answerExplanation = null, references = null, diagnostics = null) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${sender}`;
             
@@ -341,23 +569,14 @@
                 html += `<div class="agent-badge">${agentName}</div>`;
             }
             
-            // Format text to preserve newlines and indentation
-            const formattedText = text.replace(/\n/g, '<br>').replace(/  /g, '&nbsp;&nbsp;');
-            html += `<div class="message-content" style="white-space: pre-wrap; font-family: monospace;">${formattedText}`;
-            
-            if (imageData) {
-                html += `<br><img src="${imageData}" class="message-image">`;
-                html += `<br><a href="${imageData}" download="thumbnail.png" class="download-btn">Download Image</a>`;
-            }
-            
-            if (diagnostics) {
-                html += `<br><br><details style="font-size: 11px; opacity: 0.7;"><summary>Diagnostic Details</summary><pre>${JSON.stringify(diagnostics, null, 2)}</pre></details>`;
-            }
-            
-            html += `</div>`;
+            html += `<div class="message-content" style="white-space: pre-wrap; font-family: monospace;"></div>`;
             
             messageDiv.innerHTML = html;
             messagesDiv.appendChild(messageDiv);
+
+            const contentDiv = messageDiv.querySelector('.message-content');
+            renderMessageContent(contentDiv, text, imageData, videoUrl, explanation, answerExplanation, references, diagnostics);
+
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
         
@@ -370,7 +589,7 @@
         function sendMessage() {
             const text = userInput.value.trim();
             
-            if (!text && !currentImageData) return;
+            if (!text && !currentImageData && !currentFile) return;
             
             // Check WebSocket connection
             if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -379,13 +598,18 @@
             }
             
             // Add user message to chat
-            addMessage(text || '(image uploaded)', 'user', null, currentImageData);
+            const userLabel = text || (currentFile ? `(file uploaded: ${currentFile.name})` : '(image uploaded)');
+            addMessage(userLabel, 'user', null, currentImageData);
             
             // Send to server
             try {
                 ws.send(JSON.stringify({
                     message: text,
-                    image: currentImageData
+                    image: currentImageData,
+                    file: currentFile,
+                    stream: true,
+                    explain: Boolean(explainToggle && explainToggle.checked),
+                    explain_answer: Boolean(explainAnswerToggle && explainAnswerToggle.checked)
                 }));
             } catch (error) {
                 console.error('Error sending message:', error);
@@ -423,27 +647,52 @@
         });
 
         function handleFile(file) {
-            if (!file.type.startsWith('image/')) {
-                addMessage('Please upload an image file', 'assistant', 'Error');
-                return;
-            }
-            
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                currentImageData = e.target.result;
-                imagePreview.src = currentImageData;
-                previewContainer.style.display = 'block';
-            };
-            reader.onerror = function() {
-                addMessage('Failed to read file. Please try again.', 'assistant', 'Error');
-            };
-            reader.readAsDataURL(file);
+            if (!file) return;
+
+            // Upload via HTTP to support large files.
+            const form = new FormData();
+            form.append('file', file);
+
+            fetch('/upload', { method: 'POST', body: form })
+                .then((r) => r.json().then((j) => ({ ok: r.ok, status: r.status, json: j })))
+                .then(({ ok, status, json }) => {
+                    if (!ok || !json || json.status !== 'success') {
+                        const msg = (json && (json.detail || json.message)) ? (json.detail || json.message) : `Upload failed (${status})`;
+                        addMessage(msg, 'assistant', 'Error');
+                        return;
+                    }
+
+                    currentFile = json.file;
+                    const isImage = Boolean(currentFile && currentFile.is_image);
+                    if (isImage) {
+                        // Prefer URL-based image handling (lighter than base64)
+                        currentImageData = currentFile.url;
+                        imagePreview.src = currentImageData;
+                        previewContainer.style.display = 'block';
+                    } else {
+                        currentImageData = null;
+                        imagePreview.src = '';
+                        previewContainer.style.display = 'block';
+                        // Show a minimal placeholder in the preview box
+                        imagePreview.style.display = 'none';
+                        previewContainer.innerHTML = `<div style="color:#aaa; font-size: 12px;">Attached: ${escapeHtml(currentFile.name)} (${Math.round((currentFile.size_bytes||0)/1024)} KB)</div><div class="remove-image" onclick="clearImage()">×</div>`;
+                    }
+                })
+                .catch((e) => {
+                    console.error('Upload error:', e);
+                    addMessage('Upload failed. Please try again.', 'assistant', 'Error');
+                });
         }
 
         function clearImage() {
             currentImageData = null;
+            currentFile = null;
             imagePreview.src = '';
+            // restore default preview container content
             previewContainer.style.display = 'none';
+            previewContainer.innerHTML = '<img id="image-preview" class="image-preview" src="" alt="Preview"><div class="remove-image" onclick="clearImage()">×</div>';
+            // re-bind imagePreview reference
+            window.imagePreview = document.getElementById('image-preview');
             fileInput.value = '';
         }
     </script>

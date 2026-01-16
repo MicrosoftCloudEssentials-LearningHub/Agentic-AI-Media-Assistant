@@ -1,12 +1,12 @@
-resource_group_name = "RG-AI-Media-DemoX1"
-location            = "eastus2"
-name_prefix         = "zava"
+resource_group_name  = "RG-AI-Media-DemoX1"
+location             = "eastus2"
+name_prefix          = "zava"
 app_service_location = "westus3"
 app_service_sku      = "P0v3"
 
 # Enable multi-region AI Foundry with 2 projects
 enable_multi_region_foundry = true
-foundry_regions            = ["swedencentral", "westus3"]
+foundry_regions             = ["swedencentral", "westus3"]
 
 # Enable multi-agent architecture
 enable_multi_agent = true
@@ -22,7 +22,7 @@ enable_a2a_automation = true
 # West US 3: NO agents - only FLUX.2-pro model accessed via Direct API
 # NOTE: Agents only support chat models. Image models (FLUX) accessed via DirectModelService.
 agent_region_assignments = {
-  swedencentral = ["orchestrator", "cropping_agent"]  # Only chat-capable agents
+  swedencentral = ["orchestrator", "cropping_agent"] # Only chat-capable agents
   # westus3 = []  # No agents - FLUX.2-pro accessed via Direct API only
 }
 
@@ -30,8 +30,8 @@ agent_region_assignments = {
 # NOTE: Only agents that use chat models are deployed.
 # Image/video models (FLUX, Sora) are accessed via Direct API, not agents.
 agent_model_assignments = {
-  orchestrator   = "model-router"  # Sweden - Orchestration with 18-model routing (chat)
-  cropping_agent = "gpt-4o"        # Sweden - Vision capabilities (chat with vision)
+  orchestrator   = "model-router" # Sweden - Orchestration with 18-model routing (chat)
+  cropping_agent = "gpt-4o"       # Sweden - Vision capabilities (chat with vision)
   # Removed: video_agent, document_agent, visual_content_agent
   # Reason: Sora and FLUX models accessed via DirectModelService REST API
 }
