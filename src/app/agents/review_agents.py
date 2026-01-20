@@ -82,7 +82,7 @@ def review_deployed_agents():
         with open(output_file, 'w') as f:
             json.dump(summary, f, indent=2)
         
-        print(f"✓ Review complete - saved to {output_file}")
+        print(f"Review complete - saved to {output_file}")
         print(f"Total agents deployed: {len(agents)}")
         
     except Exception as e:

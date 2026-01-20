@@ -110,17 +110,33 @@ direct_model_service: Optional[DirectModelService] = None
 file_service = FileService()
 document_extractor = DocumentExtractor()
 
+# Concurrency limiter for direct image generation to avoid Azure rate limits.
+_flux_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_flux_semaphore() -> asyncio.Semaphore:
+    global _flux_semaphore
+    if _flux_semaphore is None:
+        try:
+            limit = int(os.getenv("AZURE_OPENAI_FLUX_MAX_CONCURRENCY", "1"))
+        except Exception:
+            limit = 1
+        if limit <= 0:
+            limit = 1
+        _flux_semaphore = asyncio.Semaphore(limit)
+    return _flux_semaphore
+
 try:
     # Use Azure AI Agents - let them handle everything
     logger.info("Initializing Hybrid Agent Service (Azure AI Agents + Fallback)")
     orchestrator = HybridAgentService()
     
     if orchestrator.orchestrator_agent:
-        logger.info("✅ Agent service initialized successfully")
+        logger.info("Agent service initialized successfully")
         logger.info(f"  - Orchestrator Agent ID: {orchestrator.orchestrator_agent.id}")
         logger.info("  - Orchestrator handles all routing with AI-powered decision making")
     else:
-        logger.warning("⚠️ Agent service initialized with fallback mode")
+        logger.warning("Agent service initialized with fallback mode")
         logger.warning("  - Azure AI Agents unavailable, using local fallback responses")
         orchestrator_error = "Azure AI Agents unavailable - using fallback mode"
 
@@ -371,10 +387,17 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
         if action == "call_flux":
             # FLUX.2-pro (West US 3)
-            result = await asyncio.to_thread(svc.generate_image_flux2, prompt, size)
+            async with _get_flux_semaphore():
+                result = await asyncio.to_thread(svc.generate_image_flux2, prompt, size)
             if result.get("status") != "success":
                 status_code = result.get("status_code")
                 hint = None
+                if status_code == 429:
+                    hint = (
+                        "429 RateLimitReached means your Azure AI Services tier/quota is throttling image generation. "
+                        "The server will retry briefly, but if it keeps happening you need to reduce request rate "
+                        "or request a quota increase/upgrade the pricing tier."
+                    )
                 if status_code == 404:
                     hint = (
                         "404 Not Found usually means the deployment name or api-version doesn't match the endpoint. "
@@ -390,12 +413,17 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                     assumptions=["Your prompt is valid and the model endpoint is reachable"],
                 )
                 if wants_explain_answer:
+                    status_explain = "This usually indicates endpoint, deployment, or API mismatch."
+                    if status_code == 429:
+                        status_explain = "This indicates rate limiting (quota/tier throttling)."
+                    elif status_code == 404:
+                        status_explain = "This usually indicates endpoint, deployment, or API mismatch."
                     message = _append_explain_answer_section(
                         message,
                         [
                             "I routed your request to the FLUX tool.",
                             f"The service returned HTTP {status_code} for image generation.",
-                            "This usually indicates endpoint, deployment, or API mismatch.",
+                            status_explain,
                         ],
                     )
                 return {
@@ -501,10 +529,17 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
 
         if action == "call_flux_kontext":
             # FLUX.1-Kontext-pro (Sweden Central)
-            result = await asyncio.to_thread(svc.generate_image_flux1, prompt, size)
+            async with _get_flux_semaphore():
+                result = await asyncio.to_thread(svc.generate_image_flux1, prompt, size)
             if result.get("status") != "success":
                 status_code = result.get("status_code")
                 hint = None
+                if status_code == 429:
+                    hint = (
+                        "429 RateLimitReached means your Azure AI Services tier/quota is throttling image generation. "
+                        "The server will retry briefly, but if it keeps happening you need to reduce request rate "
+                        "or request a quota increase/upgrade the pricing tier."
+                    )
                 if status_code == 404:
                     hint = (
                         "404 Not Found usually means the deployment name or api-version doesn't match the endpoint. "
@@ -520,12 +555,17 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                     assumptions=["Your prompt is valid and the model endpoint is reachable"],
                 )
                 if wants_explain_answer:
+                    status_explain = "This usually indicates endpoint, deployment, or API mismatch."
+                    if status_code == 429:
+                        status_explain = "This indicates rate limiting (quota/tier throttling)."
+                    elif status_code == 404:
+                        status_explain = "This usually indicates endpoint, deployment, or API mismatch."
                     message = _append_explain_answer_section(
                         message,
                         [
                             "I routed your request to the FLUX Kontext tool.",
                             f"The service returned HTTP {status_code} for image generation.",
-                            "This usually indicates endpoint, deployment, or API mismatch.",
+                            status_explain,
                         ],
                     )
                 return {
