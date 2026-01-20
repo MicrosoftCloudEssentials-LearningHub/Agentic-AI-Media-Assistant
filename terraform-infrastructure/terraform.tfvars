@@ -1,4 +1,4 @@
-resource_group_name  = "RG-AI-Media-DemoX1"
+resource_group_name  = "RG-AI-Media-DemoX2"
 location             = "eastus2"
 name_prefix          = "zava"
 app_service_location = "westus3"
@@ -75,7 +75,7 @@ model_specs = {
     model_version = "1"
     model_format  = "Black Forest Labs"
     sku_name      = "GlobalStandard"
-    sku_capacity  = 10
+    sku_capacity  = 4
   }
   "sora" = {
     model_name    = "sora"

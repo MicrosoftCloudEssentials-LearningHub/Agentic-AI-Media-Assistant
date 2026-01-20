@@ -311,8 +311,8 @@ resource "azapi_resource" "flux_2_pro_deployment" {
       raiPolicyName = "Microsoft.DefaultV2"
     }
     sku = {
-      name     = "GlobalStandard"
-      capacity = 2
+      name     = try(var.model_specs["FLUX.2-pro"].sku_name, "GlobalStandard")
+      capacity = try(var.model_specs["FLUX.2-pro"].sku_capacity, 2)
     }
   })
 
@@ -320,10 +320,6 @@ resource "azapi_resource" "flux_2_pro_deployment" {
     create = "30m"
     update = "30m"
     delete = "30m"
-  }
-
-  lifecycle {
-    ignore_changes = all
   }
 }
 
@@ -647,8 +643,15 @@ resource "azurerm_linux_web_app" "app" {
     # (Chat models can use gpt_api_version separately.)
     AZURE_OPENAI_API_VERSION = "2024-02-01"
 
-    # Direct model APIs (FLUX images endpoint needs a newer preview api-version)
-    AZURE_OPENAI_IMAGES_API_VERSION = "2025-04-01-preview"
+    # Direct model APIs (FLUX images endpoint requires a supported images api-version)
+    # Verified working for FLUX.2-pro on Foundry hub endpoints: 2024-06-01
+    AZURE_OPENAI_IMAGES_API_VERSION = "2024-06-01"
+    # Rate-limit protection knobs for image generation (429 retries/backoff + concurrency cap)
+    AZURE_OPENAI_IMAGES_MAX_RETRIES            = "3"
+    AZURE_OPENAI_IMAGES_RETRY_BASE_SECONDS     = "1.5"
+    AZURE_OPENAI_IMAGES_RETRY_MAX_SECONDS      = "20"
+    AZURE_OPENAI_IMAGES_CONCURRENCY_LIMIT      = "2"
+    AZURE_OPENAI_IMAGES_API_VERSION_CACHE_SECONDS = "3600"
     AZURE_OPENAI_SORA_API_VERSION   = "preview"
 
     # Default endpoint/key for image service (FLUX.2-pro region)

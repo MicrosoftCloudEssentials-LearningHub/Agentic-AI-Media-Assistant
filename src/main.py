@@ -380,6 +380,11 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                         "404 Not Found usually means the deployment name or api-version doesn't match the endpoint. "
                         "Verify the FLUX deployment exists in the target Foundry account and that AZURE_OPENAI_IMAGES_API_VERSION is supported."
                     )
+                if status_code == 429:
+                    hint = (
+                        "429 RateLimitReached means the model is reachable but you've exceeded the call rate limit for the current tier/capacity. "
+                        "Wait and retry, reduce concurrent image requests, or increase capacity/request a quota increase for the deployment."
+                    )
                 message = _format_standard_reply(
                     answer="The FLUX image generation request failed.",
                     actions=["Attempted image generation with FLUX.2-pro"],

@@ -7,7 +7,9 @@ import logging
 import json
 import requests
 import time
-from typing import Dict, Any, Optional
+import random
+import threading
+from typing import Dict, Any, Optional, Tuple
 from azure.identity import DefaultAzureCredential
 from azure.core.credentials import AccessToken
 
@@ -72,11 +74,80 @@ class DirectModelService:
         # - Images typically require newer preview versions in Foundry/Azure OpenAI compatible endpoints.
         # - Sora uses a v1 job-based API with api-version=preview.
         self.api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
-        self.images_api_version = os.getenv("AZURE_OPENAI_IMAGES_API_VERSION", "2025-04-01-preview")
+        # For Foundry hub endpoints, FLUX image generation is supported on 2024-06-01.
+        # Using an unsupported api-version can manifest as 404/400 depending on the route.
+        self.images_api_version = os.getenv("AZURE_OPENAI_IMAGES_API_VERSION", "2024-06-01")
+        self.images_api_version_fallback = os.getenv(
+            "AZURE_OPENAI_IMAGES_API_VERSION_FALLBACK",
+            "2024-06-01",
+        )
+        self.images_api_version_cache_seconds = int(
+            os.getenv("AZURE_OPENAI_IMAGES_API_VERSION_CACHE_SECONDS", "3600")
+        )
+        self._images_api_version_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
         # Next generation v1 Azure OpenAI APIs use versionless routing: api-version=preview.
         # This is especially important for /openai/v1/* endpoints.
         self.v1_api_version = os.getenv("AZURE_OPENAI_V1_API_VERSION", "preview")
         self.sora_api_version = os.getenv("AZURE_OPENAI_SORA_API_VERSION", "preview")
+
+        # Rate-limit protection for image endpoints.
+        # These help reduce user-visible failures when the pricing tier call-rate is exceeded.
+        self.images_max_retries = int(os.getenv("AZURE_OPENAI_IMAGES_MAX_RETRIES", "3"))
+        self.images_retry_base_seconds = float(os.getenv("AZURE_OPENAI_IMAGES_RETRY_BASE_SECONDS", "1.5"))
+        self.images_retry_max_seconds = float(os.getenv("AZURE_OPENAI_IMAGES_RETRY_MAX_SECONDS", "20"))
+        self.images_concurrency_limit = max(1, int(os.getenv("AZURE_OPENAI_IMAGES_CONCURRENCY_LIMIT", "2")))
+        self._images_semaphore = threading.BoundedSemaphore(value=self.images_concurrency_limit)
+
+    def _retry_after_seconds(self, resp: requests.Response) -> Optional[float]:
+        """Best-effort parse for server-provided retry delay."""
+        try:
+            ra = resp.headers.get("Retry-After")
+            if ra is not None:
+                return float(ra)
+        except Exception:
+            pass
+        try:
+            ra_ms = resp.headers.get("retry-after-ms") or resp.headers.get("x-ms-retry-after-ms")
+            if ra_ms is not None:
+                return float(ra_ms) / 1000.0
+        except Exception:
+            pass
+        return None
+
+    def _post_with_rate_limit_retries(
+        self,
+        url: str,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        timeout: float,
+    ) -> requests.Response:
+        """POST with simple 429 backoff, respecting Retry-After when available."""
+        max_attempts = max(1, self.images_max_retries + 1)
+        last_resp: Optional[requests.Response] = None
+
+        for attempt_index in range(max_attempts):
+            with self._images_semaphore:
+                resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            last_resp = resp
+
+            if resp.status_code != 429:
+                return resp
+
+            if attempt_index >= max_attempts - 1:
+                return resp
+
+            retry_after = self._retry_after_seconds(resp)
+            if retry_after is None:
+                backoff = self.images_retry_base_seconds * (2 ** attempt_index)
+                # Small jitter so concurrent clients don't retry in lockstep.
+                backoff = backoff * (0.9 + random.random() * 0.2)
+                retry_after = min(backoff, self.images_retry_max_seconds)
+            else:
+                retry_after = min(float(retry_after), self.images_retry_max_seconds)
+
+            time.sleep(max(0.0, retry_after))
+
+        return last_resp  # type: ignore[return-value]
 
     def _allowed_image_sizes(self) -> set[str]:
         """Return the allowed image sizes for image generation.
@@ -121,6 +192,102 @@ class DirectModelService:
             return "api version not supported" in str(msg).lower()
         except Exception:
             return "api version not supported" in str(response_text).lower()
+
+    def _looks_like_not_found(self, response_text: str) -> bool:
+        text = (response_text or "").strip()
+        if not text:
+            return False
+        if text.upper() == "NOT FOUND":
+            return True
+        try:
+            obj = json.loads(text)
+            err = (obj or {}).get("error") or {}
+            msg = str(err.get("message") or "")
+            code = str(err.get("code") or "")
+            combined = f"{code} {msg}".lower()
+            return "resource not found" in combined or "not found" in combined
+        except Exception:
+            lowered = text.lower()
+            return "resource not found" in lowered or lowered == "not found" or "not found" in lowered
+
+    def _get_cached_images_api_version(self, endpoint: str, deployment: str) -> Optional[str]:
+        key = (endpoint.rstrip("/"), deployment)
+        entry = self._images_api_version_cache.get(key)
+        if not entry:
+            return None
+        if float(entry.get("expires_at", 0)) < time.time():
+            self._images_api_version_cache.pop(key, None)
+            return None
+        return entry.get("api_version")
+
+    def _cache_images_api_version(self, endpoint: str, deployment: str, api_version: str) -> None:
+        ttl = max(60, self.images_api_version_cache_seconds)
+        key = (endpoint.rstrip("/"), deployment)
+        self._images_api_version_cache[key] = {
+            "api_version": api_version,
+            "expires_at": time.time() + ttl,
+        }
+
+    def _post_deployment_images_with_version_fallback(
+        self,
+        endpoint: str,
+        deployment: str,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        size: str,
+    ) -> Dict[str, Any]:
+        endpoint = endpoint.rstrip("/")
+        cached = self._get_cached_images_api_version(endpoint, deployment)
+        primary_version = cached or self.images_api_version
+        fallback_version = self.images_api_version_fallback
+
+        def attempt(api_version: str) -> Dict[str, Any]:
+            url = f"{endpoint}/openai/deployments/{deployment}/images/generations"
+            url_with_version = f"{url}?api-version={api_version}"
+            resp = self._post_with_rate_limit_retries(url_with_version, headers=headers, payload=payload, timeout=120)
+            return {
+                "status_code": resp.status_code,
+                "text": resp.text,
+                "json": (resp.json() if resp.headers.get("content-type", "").lower().startswith("application/json") else None),
+                "url": url,
+                "api_version": api_version,
+            }
+
+        first = attempt(primary_version)
+        if first["status_code"] == 200:
+            self._cache_images_api_version(endpoint, deployment, primary_version)
+            return {
+                "ok": True,
+                "result": first["json"] or {},
+                "request": {"url": first["url"], "api_version": primary_version, "size": size},
+            }
+
+        should_retry_fallback = (
+            self._is_api_version_not_supported(first["text"])
+            or (first["status_code"] == 404 and self._looks_like_not_found(first["text"]))
+        )
+        if should_retry_fallback and fallback_version and fallback_version != primary_version:
+            second = attempt(fallback_version)
+            if second["status_code"] == 200:
+                self._cache_images_api_version(endpoint, deployment, fallback_version)
+                return {
+                    "ok": True,
+                    "result": second["json"] or {},
+                    "request": {"url": second["url"], "api_version": fallback_version, "size": size},
+                }
+            return {
+                "ok": False,
+                "error": second["text"],
+                "status_code": second["status_code"],
+                "request": {"url": second["url"], "api_version": fallback_version, "size": size},
+            }
+
+        return {
+            "ok": False,
+            "error": first["text"],
+            "status_code": first["status_code"],
+            "request": {"url": first["url"], "api_version": primary_version, "size": size},
+        }
 
     def _normalize_endpoint(self, endpoint: Optional[str]) -> Optional[str]:
         if not endpoint:
@@ -236,7 +403,7 @@ class DirectModelService:
                 v1_payload["model"] = self.flux1_deployment
 
                 v1_url = f"{endpoint}/openai/v1/images/generations?api-version={self.v1_api_version}"
-                v1_resp = requests.post(v1_url, headers=headers, json=v1_payload, timeout=120)
+                v1_resp = self._post_with_rate_limit_retries(v1_url, headers=headers, payload=v1_payload, timeout=120)
 
                 if (
                     v1_resp.status_code == 400
@@ -244,7 +411,7 @@ class DirectModelService:
                     and str(self.v1_api_version).lower() != "preview"
                 ):
                     v1_url = f"{endpoint}/openai/v1/images/generations?api-version=preview"
-                    v1_resp = requests.post(v1_url, headers=headers, json=v1_payload, timeout=120)
+                    v1_resp = self._post_with_rate_limit_retries(v1_url, headers=headers, payload=v1_payload, timeout=120)
 
                 if v1_resp.status_code == 200:
                     v1_result = v1_resp.json()
@@ -256,27 +423,31 @@ class DirectModelService:
                         "status": "success",
                     }
 
-                # Fallback: deployment-scoped images route.
-                url = f"{endpoint}/openai/deployments/{self.flux1_deployment}/images/generations"
-                url_with_version = f"{url}?api-version={self.images_api_version}"
-                response = requests.post(url_with_version, headers=headers, json=payload, timeout=120)
+                # Fallback: deployment-scoped images route (auto-retry api-version + cache).
+                dep = self._post_deployment_images_with_version_fallback(
+                    endpoint=endpoint,
+                    deployment=self.flux1_deployment,
+                    headers=headers,
+                    payload=payload,
+                    size=size,
+                )
 
-                if response.status_code == 200:
-                    result = response.json()
+                if dep.get("ok"):
+                    result = dep.get("result") or {}
                     logger.info("SUCCESS - FLUX.1-Kontext-pro image generated")
                     return {
                         "model": self.flux1_deployment,
                         "data": result.get("data", []),
-                        "request": {"url": url, "api_version": self.images_api_version, "size": size},
+                        "request": dep.get("request"),
                         "status": "success",
                     }
 
                 # Prefer v1 error details when v1 was close, otherwise deployment route errors.
                 last_error = {
                     "model": self.flux1_deployment,
-                    "error": v1_resp.text if v1_resp.status_code != 404 else response.text,
-                    "status_code": v1_resp.status_code if v1_resp.status_code != 404 else response.status_code,
-                    "request": {"url": v1_url if v1_resp.status_code != 404 else url, "api_version": self.v1_api_version if v1_resp.status_code != 404 else self.images_api_version, "size": size},
+                    "error": v1_resp.text if v1_resp.status_code != 404 else dep.get("error"),
+                    "status_code": v1_resp.status_code if v1_resp.status_code != 404 else dep.get("status_code"),
+                    "request": {"url": v1_url if v1_resp.status_code != 404 else dep.get("request", {}).get("url"), "api_version": self.v1_api_version if v1_resp.status_code != 404 else dep.get("request", {}).get("api_version"), "size": size},
                     "status": "error",
                 }
 
@@ -331,7 +502,7 @@ class DirectModelService:
                 v1_payload["model"] = self.flux2_deployment
 
                 v1_url = f"{endpoint}/openai/v1/images/generations?api-version={self.v1_api_version}"
-                v1_resp = requests.post(v1_url, headers=headers, json=v1_payload, timeout=120)
+                v1_resp = self._post_with_rate_limit_retries(v1_url, headers=headers, payload=v1_payload, timeout=120)
 
                 if (
                     v1_resp.status_code == 400
@@ -339,7 +510,7 @@ class DirectModelService:
                     and str(self.v1_api_version).lower() != "preview"
                 ):
                     v1_url = f"{endpoint}/openai/v1/images/generations?api-version=preview"
-                    v1_resp = requests.post(v1_url, headers=headers, json=v1_payload, timeout=120)
+                    v1_resp = self._post_with_rate_limit_retries(v1_url, headers=headers, payload=v1_payload, timeout=120)
 
                 if v1_resp.status_code == 200:
                     v1_result = v1_resp.json()
@@ -351,26 +522,30 @@ class DirectModelService:
                         "status": "success",
                     }
 
-                # Fallback: deployment-scoped images route.
-                url = f"{endpoint}/openai/deployments/{self.flux2_deployment}/images/generations"
-                url_with_version = f"{url}?api-version={self.images_api_version}"
-                response = requests.post(url_with_version, headers=headers, json=payload, timeout=120)
+                # Fallback: deployment-scoped images route (auto-retry api-version + cache).
+                dep = self._post_deployment_images_with_version_fallback(
+                    endpoint=endpoint,
+                    deployment=self.flux2_deployment,
+                    headers=headers,
+                    payload=payload,
+                    size=size,
+                )
 
-                if response.status_code == 200:
-                    result = response.json()
+                if dep.get("ok"):
+                    result = dep.get("result") or {}
                     logger.info("✓ FLUX.2-pro image generated successfully")
                     return {
                         "model": self.flux2_deployment,
                         "data": result.get("data", []),
-                        "request": {"url": url, "api_version": self.images_api_version, "size": size},
+                        "request": dep.get("request"),
                         "status": "success",
                     }
 
                 last_error = {
                     "model": self.flux2_deployment,
-                    "error": v1_resp.text if v1_resp.status_code != 404 else response.text,
-                    "status_code": v1_resp.status_code if v1_resp.status_code != 404 else response.status_code,
-                    "request": {"url": v1_url if v1_resp.status_code != 404 else url, "api_version": self.v1_api_version if v1_resp.status_code != 404 else self.images_api_version, "size": size},
+                    "error": v1_resp.text if v1_resp.status_code != 404 else dep.get("error"),
+                    "status_code": v1_resp.status_code if v1_resp.status_code != 404 else dep.get("status_code"),
+                    "request": {"url": v1_url if v1_resp.status_code != 404 else dep.get("request", {}).get("url"), "api_version": self.v1_api_version if v1_resp.status_code != 404 else dep.get("request", {}).get("api_version"), "size": size},
                     "status": "error",
                 }
                 continue
