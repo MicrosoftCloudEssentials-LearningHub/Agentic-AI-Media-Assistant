@@ -116,7 +116,7 @@ def validate_deployment():
     results = validator.validate_models()
     
     if results["valid"]:
-        print("✓ All models validated successfully")
+        print("All models validated successfully")
         return True
     else:
         print("✗ Model validation failed:")

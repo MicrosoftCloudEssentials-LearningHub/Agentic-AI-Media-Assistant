@@ -1,10 +1,39 @@
-Param()
+Param(
+  [Parameter(Mandatory = $false)]
+  [string]$kv_name,
 
-# Read JSON input from Terraform external data source via stdin
-$input = [Console]::In.ReadToEnd() | ConvertFrom-Json
+  [Parameter(Mandatory = $false)]
+  [string]$rg_name,
+
+  [Parameter(Mandatory = $false)]
+  [string]$sub_id
+)
+
+# Terraform external data source passes JSON via stdin.
+# For manual runs (or when stdin is empty), allow explicit params.
+$stdin = [Console]::In.ReadToEnd()
+$input = $null
+if ($stdin -and $stdin.Trim().Length -gt 0) {
+  try {
+    $input = $stdin | ConvertFrom-Json
+  } catch {
+    $input = $null
+  }
+}
+
 $kvName = $input.kv_name
 $rg = $input.rg_name
 $subId = $input.sub_id
+
+if (-not $kvName) { $kvName = $kv_name }
+if (-not $rg) { $rg = $rg_name }
+if (-not $subId) { $subId = $sub_id }
+
+if (-not $kvName -or -not $rg) {
+  $output = @{ result = "error"; message = "Missing required inputs. Provide stdin JSON (Terraform) or -kv_name/-rg_name parameters." }
+  $output | ConvertTo-Json -Compress
+  exit 1
+}
 
 [Console]::Error.WriteLine("[ensure_kv_network_rule] Ensuring network rule exists for Key Vault: $kvName in RG: $rg (Sub: $subId)")
 

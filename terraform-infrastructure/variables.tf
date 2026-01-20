@@ -192,3 +192,45 @@ variable "lock_key_vault_network" {
   default     = false
 }
 
+variable "enable_key_vault_private_endpoint" {
+  type        = bool
+  description = "Enable a Private Endpoint + Private DNS for Key Vault. When enabled and public access is disabled, Terraform must run from inside the VNet to manage secrets."
+  default     = false
+}
+
+variable "key_vault_public_network_access_enabled" {
+  type        = bool
+  description = "Controls Key Vault public network access. For Private Endpoint-only access, set false."
+  default     = true
+}
+
+variable "key_vault_vnet_address_space" {
+  type        = string
+  description = "CIDR for the VNet used for Key Vault Private Endpoint and App Service VNet integration."
+  default     = "10.50.0.0/16"
+}
+
+variable "key_vault_private_endpoint_subnet_cidr" {
+  type        = string
+  description = "CIDR for the subnet that hosts the Key Vault Private Endpoint."
+  default     = "10.50.1.0/24"
+}
+
+variable "app_service_integration_subnet_cidr" {
+  type        = string
+  description = "CIDR for the delegated subnet used by App Service VNet integration (Swift)."
+  default     = "10.50.2.0/24"
+}
+
+variable "flux_2_pro_sku_name" {
+  type        = string
+  description = "SKU name for the FLUX.2-pro deployment (maps to throughput/limits behavior)."
+  default     = "GlobalStandard"
+}
+
+variable "flux_2_pro_sku_capacity" {
+  type        = number
+  description = "SKU capacity for the FLUX.2-pro deployment. This is NOT subscription quota; it controls deployment capacity and can still be constrained by quota."
+  default     = 2
+}
+

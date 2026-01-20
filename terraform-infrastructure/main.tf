@@ -311,8 +311,8 @@ resource "azapi_resource" "flux_2_pro_deployment" {
       raiPolicyName = "Microsoft.DefaultV2"
     }
     sku = {
-      name     = "GlobalStandard"
-      capacity = 2
+      name     = var.flux_2_pro_sku_name
+      capacity = var.flux_2_pro_sku_capacity
     }
   })
 
@@ -322,9 +322,6 @@ resource "azapi_resource" "flux_2_pro_deployment" {
     delete = "30m"
   }
 
-  lifecycle {
-    ignore_changes = all
-  }
 }
 
 # DALL-E-3 deployment REMOVED - Permanent quota exhaustion (2/2 capacity used)
@@ -772,15 +769,17 @@ resource "azurerm_key_vault" "kv" {
   soft_delete_retention_days    = 7
   purge_protection_enabled      = false
   enable_rbac_authorization     = false
-  public_network_access_enabled = true
+  public_network_access_enabled = var.key_vault_public_network_access_enabled
 
   network_acls {
     # Keep the vault open initially so Terraform can read/write secrets during plan/apply.
     # The `null_resource.kv_network_rules` will add the current and webapp IPs and
     # then set the default action to Deny when `var.lock_key_vault_network` is true.
-    default_action = "Allow"
+    # During migration, keep firewall open when public access is enabled.
+    # When `key_vault_public_network_access_enabled=false`, this becomes PE-only (default Deny).
+    default_action = var.key_vault_public_network_access_enabled ? "Allow" : "Deny"
     bypass         = "AzureServices"
-    ip_rules       = ["${chomp(data.http.current_ip.response_body)}/32"]
+    ip_rules       = var.key_vault_public_network_access_enabled ? ["${chomp(data.http.current_ip.response_body)}/32"] : []
   }
 
   access_policy {
@@ -790,6 +789,88 @@ resource "azurerm_key_vault" "kv" {
   }
 
   tags = { purpose = "multi-agent-ai-secrets" }
+}
+
+# Key Vault Private Endpoint + Private DNS (optional)
+resource "azurerm_virtual_network" "kv_vnet" {
+  count               = var.enable_key_vault_private_endpoint ? 1 : 0
+  # Use a distinct name tied to the App Service region so replacement doesn't
+  # delete subnets out from under dependent resources during the same apply.
+  name                = "${var.name_prefix}-${local.suffix}-vnet-${local.web_app_location}"
+  # Swift (App Service) VNet integration requires the VNet to be in the same region as the Web App.
+  location            = local.web_app_location
+  resource_group_name = azurerm_resource_group.rg.name
+  address_space       = [var.key_vault_vnet_address_space]
+}
+
+resource "azurerm_subnet" "key_vault_private_endpoint" {
+  count                = var.enable_key_vault_private_endpoint ? 1 : 0
+  name                 = "${var.name_prefix}-${local.suffix}-snet-kv-pe"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.kv_vnet[0].name
+  address_prefixes     = [var.key_vault_private_endpoint_subnet_cidr]
+
+  private_endpoint_network_policies_enabled = false
+}
+
+resource "azurerm_subnet" "app_service_integration" {
+  count                = var.enable_key_vault_private_endpoint ? 1 : 0
+  name                 = "${var.name_prefix}-${local.suffix}-snet-app-int"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.kv_vnet[0].name
+  address_prefixes     = [var.app_service_integration_subnet_cidr]
+
+  delegation {
+    name = "appservice-delegation"
+    service_delegation {
+      name    = "Microsoft.Web/serverFarms"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/action"]
+    }
+  }
+}
+
+resource "azurerm_private_dns_zone" "key_vault" {
+  count               = var.enable_key_vault_private_endpoint ? 1 : 0
+  name                = "privatelink.vaultcore.azure.net"
+  resource_group_name = azurerm_resource_group.rg.name
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "key_vault" {
+  count                 = var.enable_key_vault_private_endpoint ? 1 : 0
+  name                  = "${var.name_prefix}-${local.suffix}-kv-dnslink"
+  resource_group_name   = azurerm_resource_group.rg.name
+  private_dns_zone_name = azurerm_private_dns_zone.key_vault[0].name
+  virtual_network_id    = azurerm_virtual_network.kv_vnet[0].id
+  registration_enabled  = false
+}
+
+resource "azurerm_private_endpoint" "key_vault" {
+  count               = var.enable_key_vault_private_endpoint ? 1 : 0
+  name                = "${var.name_prefix}-${local.suffix}-kv-pe"
+  # Private Endpoints are regional and must match the VNet/subnet region.
+  location            = local.web_app_location
+  resource_group_name = azurerm_resource_group.rg.name
+  subnet_id           = azurerm_subnet.key_vault_private_endpoint[0].id
+
+  private_service_connection {
+    name                           = "${var.name_prefix}-${local.suffix}-kv-psc"
+    private_connection_resource_id = azurerm_key_vault.kv.id
+    subresource_names              = ["vault"]
+    is_manual_connection           = false
+  }
+
+  private_dns_zone_group {
+    name                 = "default"
+    private_dns_zone_ids = [azurerm_private_dns_zone.key_vault[0].id]
+  }
+
+  depends_on = [azurerm_private_dns_zone_virtual_network_link.key_vault]
+}
+
+resource "azurerm_app_service_virtual_network_swift_connection" "app_vnet_integration" {
+  count          = var.enable_key_vault_private_endpoint ? 1 : 0
+  app_service_id = azurerm_linux_web_app.app.id
+  subnet_id      = azurerm_subnet.app_service_integration[0].id
 }
 
 # Wait for Key Vault to be ready and accessible
@@ -806,6 +887,7 @@ data "http" "current_ip" {
 # Ensure Key Vault firewall is OPEN for Terraform operations
 # We force this to run every time to guarantee access
 resource "null_resource" "ensure_kv_open" {
+  count = var.enable_key_vault_private_endpoint ? 0 : 1
   triggers = {
     always_run = timestamp()
   }
@@ -833,6 +915,7 @@ resource "null_resource" "ensure_kv_open" {
 # After Key Vault and Web App creation, tighten KV firewall to allow
 # only current public IP and Web App outbound IPs, then set default Deny.
 resource "null_resource" "kv_network_rules" {
+  count = var.enable_key_vault_private_endpoint ? 0 : 1
   depends_on = [
     azurerm_key_vault.kv,
     azurerm_linux_web_app.app,
@@ -880,6 +963,7 @@ data "azurerm_linux_web_app" "app_identity" {
 
 # External helper to ensure Key Vault has our current IP rule so Terraform can access secrets
 data "external" "ensure_kv_access" {
+  count = var.enable_key_vault_private_endpoint ? 0 : 1
   program = ["pwsh", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "./scripts/ensure_kv_network_rule.ps1"]
   query = {
     kv_name = local.key_vault_name
@@ -1595,6 +1679,11 @@ ${replace(jsonencode(local.model_deployment_payload[each.key]), "'", "''")}
       foreach ($spec in $modelSpecs) {
         if (-not $spec.model_name) {
           Write-Host "[SKIP] No deployment spec registered for alias $($spec.alias)" -ForegroundColor Yellow
+          continue
+        }
+
+        if ($spec.alias -eq "FLUX.2-pro") {
+          Write-Host "[SKIP] FLUX.2-pro is managed by Terraform (azapi_resource.flux_2_pro_deployment)" -ForegroundColor Yellow
           continue
         }
 

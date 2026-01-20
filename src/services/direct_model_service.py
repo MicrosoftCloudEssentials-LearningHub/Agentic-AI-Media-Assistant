@@ -7,6 +7,7 @@ import logging
 import json
 import requests
 import time
+import random
 from typing import Dict, Any, Optional
 from azure.identity import DefaultAzureCredential
 from azure.core.credentials import AccessToken
@@ -152,10 +153,18 @@ class DirectModelService:
         base = self._strip_openai_v1_suffix(endpoint)
         if not base:
             return []
-        candidates = [base]
         swapped = self._to_openai_azure_domain(base)
-        if swapped and swapped != base:
-            candidates.append(swapped)
+
+        # Prefer the Azure OpenAI-compatible domain first when the input is a
+        # Cognitive Services domain. This avoids an extra 404 on /openai/v1/*
+        # for some resources and reduces overall request volume (helps with 429s).
+        candidates: list[str] = []
+        if base and ".cognitiveservices.azure.com" in base.lower() and swapped and swapped != base:
+            candidates = [swapped, base]
+        else:
+            candidates = [base]
+            if swapped and swapped != base:
+                candidates.append(swapped)
         # De-dup while preserving order
         out: list[str] = []
         for c in candidates:
@@ -185,6 +194,94 @@ class DirectModelService:
         """Get Azure AD access token for API authentication."""
         token = self.credential.get_token("https://cognitiveservices.azure.com/.default")
         return token.token
+
+    def _request_max_retries(self) -> int:
+        try:
+            return max(0, int(os.getenv("AZURE_OPENAI_HTTP_MAX_RETRIES", "6")))
+        except Exception:
+            return 6
+
+    def _request_base_delay_seconds(self) -> float:
+        try:
+            return max(0.0, float(os.getenv("AZURE_OPENAI_HTTP_RETRY_BASE_DELAY_SECONDS", "2.0")))
+        except Exception:
+            return 2.0
+
+    def _parse_retry_after_seconds(self, response: requests.Response) -> Optional[float]:
+        # Retry-After is typically seconds for these endpoints.
+        try:
+            value = response.headers.get("Retry-After")
+            if value is None:
+                return None
+            value = str(value).strip()
+            if not value:
+                return None
+            return float(value)
+        except Exception:
+            return None
+
+    def _post_with_retries(
+        self,
+        url: str,
+        headers: Dict[str, str],
+        payload: Dict[str, Any],
+        timeout: int,
+        max_retries: Optional[int] = None,
+    ) -> requests.Response:
+        """POST with basic retry/backoff for transient failures.
+
+        Handles 429 using Retry-After when present.
+        """
+        retries = self._request_max_retries() if max_retries is None else max_retries
+        base_delay = self._request_base_delay_seconds()
+
+        last_exc: Optional[Exception] = None
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+
+                if resp.status_code in (429, 500, 502, 503, 504) and attempt <= (retries + 1):
+                    # Respect server hint when rate-limited.
+                    retry_after = self._parse_retry_after_seconds(resp)
+                    if retry_after is None:
+                        # Exponential backoff with a small jitter.
+                        retry_after = min(30.0, base_delay * (2 ** (attempt - 1)))
+                        retry_after += random.uniform(0.0, 0.25)
+
+                    # Only retry if we have remaining budget.
+                    if attempt <= (retries + 1):
+                        logger.warning(
+                            "HTTP %s from %s (attempt %s/%s). Retrying in %.2fs",
+                            resp.status_code,
+                            url,
+                            attempt,
+                            retries + 1,
+                            float(retry_after),
+                        )
+                        time.sleep(float(retry_after))
+                        continue
+
+                return resp
+
+            except requests.RequestException as e:
+                last_exc = e
+                if attempt > (retries + 1):
+                    break
+                delay = min(30.0, base_delay * (2 ** (attempt - 1))) + random.uniform(0.0, 0.25)
+                logger.warning(
+                    "Request exception posting to %s (attempt %s/%s): %s. Retrying in %.2fs",
+                    url,
+                    attempt,
+                    retries + 1,
+                    str(e),
+                    float(delay),
+                )
+                time.sleep(float(delay))
+
+        # Final attempt failed via exception path; raise to preserve error signal.
+        raise last_exc if last_exc else RuntimeError("Request failed")
 
     def _parse_resolution(self, resolution: str) -> tuple[int, int]:
         """Parse resolution strings like '1920x1080' into (width,height)."""
@@ -236,7 +333,7 @@ class DirectModelService:
                 v1_payload["model"] = self.flux1_deployment
 
                 v1_url = f"{endpoint}/openai/v1/images/generations?api-version={self.v1_api_version}"
-                v1_resp = requests.post(v1_url, headers=headers, json=v1_payload, timeout=120)
+                v1_resp = self._post_with_retries(v1_url, headers=headers, payload=v1_payload, timeout=120)
 
                 if (
                     v1_resp.status_code == 400
@@ -244,7 +341,7 @@ class DirectModelService:
                     and str(self.v1_api_version).lower() != "preview"
                 ):
                     v1_url = f"{endpoint}/openai/v1/images/generations?api-version=preview"
-                    v1_resp = requests.post(v1_url, headers=headers, json=v1_payload, timeout=120)
+                    v1_resp = self._post_with_retries(v1_url, headers=headers, payload=v1_payload, timeout=120)
 
                 if v1_resp.status_code == 200:
                     v1_result = v1_resp.json()
@@ -256,10 +353,22 @@ class DirectModelService:
                         "status": "success",
                     }
 
+                # If we're rate-limited or unauthorized, do not attempt an additional
+                # fallback request (it increases load and can surface confusing 404s).
+                if v1_resp.status_code in (401, 403, 429):
+                    last_error = {
+                        "model": self.flux1_deployment,
+                        "error": v1_resp.text,
+                        "status_code": v1_resp.status_code,
+                        "request": {"url": v1_url, "api_version": self.v1_api_version, "size": size},
+                        "status": "error",
+                    }
+                    continue
+
                 # Fallback: deployment-scoped images route.
                 url = f"{endpoint}/openai/deployments/{self.flux1_deployment}/images/generations"
                 url_with_version = f"{url}?api-version={self.images_api_version}"
-                response = requests.post(url_with_version, headers=headers, json=payload, timeout=120)
+                response = self._post_with_retries(url_with_version, headers=headers, payload=payload, timeout=120)
 
                 if response.status_code == 200:
                     result = response.json()
@@ -331,7 +440,7 @@ class DirectModelService:
                 v1_payload["model"] = self.flux2_deployment
 
                 v1_url = f"{endpoint}/openai/v1/images/generations?api-version={self.v1_api_version}"
-                v1_resp = requests.post(v1_url, headers=headers, json=v1_payload, timeout=120)
+                v1_resp = self._post_with_retries(v1_url, headers=headers, payload=v1_payload, timeout=120)
 
                 if (
                     v1_resp.status_code == 400
@@ -339,11 +448,11 @@ class DirectModelService:
                     and str(self.v1_api_version).lower() != "preview"
                 ):
                     v1_url = f"{endpoint}/openai/v1/images/generations?api-version=preview"
-                    v1_resp = requests.post(v1_url, headers=headers, json=v1_payload, timeout=120)
+                    v1_resp = self._post_with_retries(v1_url, headers=headers, payload=v1_payload, timeout=120)
 
                 if v1_resp.status_code == 200:
                     v1_result = v1_resp.json()
-                    logger.info("✓ FLUX.2-pro image generated successfully via v1 route")
+                    logger.info("FLUX.2-pro image generated successfully via v1 route")
                     return {
                         "model": self.flux2_deployment,
                         "data": v1_result.get("data", []),
@@ -351,14 +460,26 @@ class DirectModelService:
                         "status": "success",
                     }
 
+                # If we're rate-limited or unauthorized, do not attempt an additional
+                # fallback request (it increases load and can surface confusing 404s).
+                if v1_resp.status_code in (401, 403, 429):
+                    last_error = {
+                        "model": self.flux2_deployment,
+                        "error": v1_resp.text,
+                        "status_code": v1_resp.status_code,
+                        "request": {"url": v1_url, "api_version": self.v1_api_version, "size": size},
+                        "status": "error",
+                    }
+                    continue
+
                 # Fallback: deployment-scoped images route.
                 url = f"{endpoint}/openai/deployments/{self.flux2_deployment}/images/generations"
                 url_with_version = f"{url}?api-version={self.images_api_version}"
-                response = requests.post(url_with_version, headers=headers, json=payload, timeout=120)
+                response = self._post_with_retries(url_with_version, headers=headers, payload=payload, timeout=120)
 
                 if response.status_code == 200:
                     result = response.json()
-                    logger.info("✓ FLUX.2-pro image generated successfully")
+                    logger.info("FLUX.2-pro image generated successfully")
                     return {
                         "model": self.flux2_deployment,
                         "data": result.get("data", []),
@@ -548,7 +669,7 @@ class DirectModelService:
                     "request": {"url": content_url, "api_version": self.sora_api_version},
                 }
 
-            logger.info("✓ Sora video bytes downloaded successfully")
+            logger.info("Sora video bytes downloaded successfully")
             return {
                 "model": self.sora_deployment,
                 "status": "success",

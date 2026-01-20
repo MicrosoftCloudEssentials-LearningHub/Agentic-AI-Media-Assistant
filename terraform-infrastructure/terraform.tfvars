@@ -92,3 +92,10 @@ cosmos_tenant_id = "zava-media-demo"
 
 # Key vault network locking disabled to allow Terraform access
 lock_key_vault_network = false
+
+# Key Vault Private Endpoint (PE) migration
+# Keep public access enabled initially so Terraform can still manage secrets from a laptop.
+# After you move Terraform execution into the VNet (or stop managing KV secrets in Terraform),
+# set `key_vault_public_network_access_enabled = false`.
+enable_key_vault_private_endpoint        = true
+key_vault_public_network_access_enabled  = true
