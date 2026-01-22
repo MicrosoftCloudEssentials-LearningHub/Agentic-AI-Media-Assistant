@@ -34,7 +34,7 @@ Last updated: 2026-01-20
 
 > E.g
 
-<img width="1670" height="1076" alt="image" src="https://github.com/user-attachments/assets/85345b53-bce0-49a2-a730-6a9a46764e47" />
+<img width="1911" height="1080" alt="image" src="https://github.com/user-attachments/assets/b53017b9-4229-46b2-9759-b8aab8316b89" />
 
 > [!IMPORTANT]
 > The deployment process `typically takes 15-20 minutes`
