@@ -187,16 +187,21 @@ graph TD
 3. **Test Processing**: For example:
   
     - **Chat**: Ask for information "What is GitHub Copilot?" 
-    
-        <img width="1434" height="941" alt="image" src="https://github.com/user-attachments/assets/55b76f3f-f566-4b42-99ad-7d25b5e6efa1" />
-        
-        <img width="1204" height="921" alt="image" src="https://github.com/user-attachments/assets/232c11bb-81b6-40c6-9149-8a848a935560" />
+
+        | | | 
+        | --- | --- |
+        | <img width="1917" height="1087" alt="image" src="https://github.com/user-attachments/assets/f314af50-8dcb-4a0a-81e7-549bb606f9e9" /> |  <img width="1909" height="1088" alt="image" src="https://github.com/user-attachments/assets/0b227a3f-3645-4070-80a8-9d204169ce09" /> |
   
      - **Image Upload**: Upload an image and ask "Crop the main subject"
      - **Background**: "Change the background to a beach scene" (routed to East US for fast generation)
      - **Thumbnail**: "Create a thumbnail with the text 'AMAZING'" (routed to East US)
      - **Multi-Step**: "Crop the car, put it on a race track background, and add the text 'SPEED' in red"
-     - **Video**: "Generate a 5-second video of a sunset over mountains" (Sweden Central - Sora)
+     - **Video**: "Generate a video of a Scottish terrier" (Sweden Central - Sora)
+
+          <img width="1910" height="1081" alt="image" src="https://github.com/user-attachments/assets/6d91b79f-2fbc-44be-a0cb-0b07337c79ee" />
+
+         https://github.com/user-attachments/assets/d882e712-e9c2-4674-ac3d-371b3cab5f8a
+
      - **Document**: "Extract all text from this PDF" or "Summarize this document" (Sweden Central - FLUX.1-Kontext-pro)
 
 <!-- START BADGE -->
