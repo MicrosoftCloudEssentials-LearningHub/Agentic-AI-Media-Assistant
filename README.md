@@ -201,13 +201,13 @@ graph TD
      
          > Video of a bottle in different environments:
          
-         https://github.com/user-attachments/assets/9f76cc5b-17de-40af-b6c7-b00ed07f5871
+         <https://github.com/user-attachments/assets/9f76cc5b-17de-40af-b6c7-b00ed07f5871>
 
          > "Generate a video of a Scottish terrier" (Sweden Central - Sora)
 
           <img width="1910" height="1081" alt="image" src="https://github.com/user-attachments/assets/6d91b79f-2fbc-44be-a0cb-0b07337c79ee" />
 
-         https://github.com/user-attachments/assets/d882e712-e9c2-4674-ac3d-371b3cab5f8a
+         <https://github.com/user-attachments/assets/d882e712-e9c2-4674-ac3d-371b3cab5f8a>
          
      - **Document**: "Extract all text from this PDF" or "Summarize this document" (Sweden Central - FLUX.1-Kontext-pro)
 
