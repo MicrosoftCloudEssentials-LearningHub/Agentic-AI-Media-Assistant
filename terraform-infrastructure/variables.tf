@@ -234,3 +234,174 @@ variable "flux_2_pro_sku_capacity" {
   default     = 2
 }
 
+variable "oss_image_backend_url" {
+  type        = string
+  description = "Optional base URL for a remote open-source image backend (e.g., https://my-a1111.example.com). Only used when oss_baseline_mode=remote."
+  default     = ""
+}
+
+variable "oss_image_backend_kind" {
+  type        = string
+  description = "Open-source image backend kind. Currently supported by the app: a1111."
+  default     = "a1111"
+}
+
+variable "oss_image_backend_timeout_seconds" {
+  type        = number
+  description = "Timeout (seconds) for open-source image backend requests."
+  default     = 120
+}
+
+variable "oss_image_backend_auth_bearer" {
+  type        = string
+  description = "Optional bearer token for the OSS image backend. Prefer passing a Key Vault reference string rather than a raw token."
+  default     = ""
+  sensitive   = true
+}
+
+variable "oss_video_backend_url" {
+  type        = string
+  description = "Optional base URL for a remote open-source video backend (e.g., https://my-oss-video.example.com). Only used when oss_baseline_mode=remote."
+  default     = ""
+}
+
+variable "oss_video_backend_kind" {
+  type        = string
+  description = "Open-source video backend kind. Currently supported by the app: generic (POST /generate)."
+  default     = "generic"
+}
+
+variable "oss_video_backend_timeout_seconds" {
+  type        = number
+  description = "Timeout (seconds) for open-source video backend requests."
+  default     = 300
+}
+
+variable "oss_video_backend_auth_bearer" {
+  type        = string
+  description = "Optional bearer token for the OSS video backend. Prefer passing a Key Vault reference string rather than a raw token."
+  default     = ""
+  sensitive   = true
+}
+
+variable "oss_baseline_mode" {
+  type        = string
+  description = "Controls OSS baseline behavior. local (default) uses in-app open-source libraries (CPU-safe). remote uses OSS_IMAGE_BACKEND_URL / OSS_VIDEO_BACKEND_URL endpoints."
+  default     = "local"
+}
+
+variable "oss_thumbnail_mode" {
+  type        = string
+  description = "Controls OSS thumbnail generation. local (default) uses in-app libraries. azure-worker/aks offloads to OSS_AZURE_WORKER_URL /generate-thumbnail when configured."
+  default     = "local"
+}
+
+variable "oss_azure_worker_url_override" {
+  type        = string
+  description = "Optional override for OSS_AZURE_WORKER_URL (e.g., a Container App/VM URL hosting src/oss_worker). Used even when enable_oss_aks_worker=false."
+  default     = ""
+}
+
+variable "enable_oss_aks_worker" {
+  type        = bool
+  description = "Enable an AKS-hosted OSS Diffusers worker (GPU) for realistic OSS images. When enabled, the app can call the worker via OSS_AZURE_WORKER_URL."
+  default     = false
+}
+
+variable "aks_nodes_subnet_cidr" {
+  type        = string
+  description = "CIDR for the subnet that hosts AKS nodes (used when enable_oss_aks_worker=true). Must fit inside key_vault_vnet_address_space."
+  default     = "10.50.3.0/24"
+}
+
+variable "oss_aks_worker_lb_ip" {
+  type        = string
+  description = "Static private IP (within aks_nodes_subnet_cidr) for the internal LoadBalancer service that exposes the OSS worker to the App Service via VNet integration."
+  default     = "10.50.3.10"
+}
+
+variable "oss_aks_worker_auth_bearer" {
+  type        = string
+  description = "Optional shared bearer token required by the OSS worker. Set the same value in the worker and the web app."
+  default     = ""
+  sensitive   = true
+}
+
+variable "oss_diffusers_model_id" {
+  type        = string
+  description = "Model id or local path for Diffusers pipeline used by the OSS worker (e.g., SDXL model id). Required when enable_oss_aks_worker=true."
+  default     = ""
+}
+
+variable "oss_diffusers_device" {
+  type        = string
+  description = "Diffusers device hint for in-app OSS generation (cpu|cuda). Default cpu." 
+  default     = "cpu"
+}
+
+variable "oss_diffusers_num_inference_steps" {
+  type        = number
+  description = "Default Diffusers inference steps for OSS generation (lower is faster)."
+  default     = 12
+}
+
+variable "oss_diffusers_guidance_scale" {
+  type        = number
+  description = "Default Diffusers guidance scale for OSS generation."
+  default     = 5.0
+}
+
+variable "oss_aks_worker_replicas" {
+  type        = number
+  description = "Number of replicas for the AKS OSS worker deployment. Increase for higher throughput (requires GPU capacity)."
+  default     = 1
+}
+
+variable "oss_aks_worker_preload" {
+  type        = bool
+  description = "Whether the OSS worker should preload the Diffusers pipeline at container startup for lower first-request latency."
+  default     = true
+}
+
+variable "oss_aks_worker_cache_enabled" {
+  type        = bool
+  description = "Enable a persistent RWX cache volume (Azure Files) for HuggingFace/Diffusers model weights to reduce cold starts on reschedules."
+  default     = false
+}
+
+variable "oss_aks_worker_cache_size" {
+  type        = string
+  description = "PVC size for the OSS worker cache (e.g., 50Gi). Only used when oss_aks_worker_cache_enabled=true."
+  default     = "50Gi"
+}
+
+variable "oss_aks_worker_cache_storage_class" {
+  type        = string
+  description = "StorageClass name for the OSS worker cache PVC. For RWX on AKS, azurefile-csi is commonly available. Only used when oss_aks_worker_cache_enabled=true."
+  default     = "azurefile-csi"
+}
+
+variable "aks_kubernetes_version" {
+  type        = string
+  description = "AKS Kubernetes version (optional). Leave empty to let Azure pick a default supported version."
+  default     = ""
+}
+
+variable "aks_system_node_vm_size" {
+  type        = string
+  description = "VM size for the AKS system node pool."
+  default     = "Standard_D2_v3"
+}
+
+variable "aks_gpu_node_vm_size" {
+  type        = string
+  description = "VM size for the AKS GPU node pool (must be a GPU SKU like Standard_NC*)."
+  default     = "Standard_NC6s_v3"
+}
+
+variable "aks_gpu_node_count" {
+  type        = number
+  description = "Number of nodes in the AKS GPU node pool."
+  default     = 1
+}
+

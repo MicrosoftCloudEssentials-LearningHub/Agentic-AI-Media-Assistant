@@ -75,21 +75,23 @@ locals {
   # Azure AI Document Intelligence account name (must be globally unique and DNS-safe)
   document_intelligence_account = lower(replace("${var.name_prefix}${local.suffix}di", "-", ""))
   # Model/region mapping (overrides loaded from JSON if present) - Media processing only
-  model_regions_overrides = fileexists("${path.module}/${var.model_regions_file}") ? try(jsondecode(file("${path.module}/${var.model_regions_file}")).model_regions, {}) : {}
-  model_regions_final     = merge(var.model_regions, local.model_regions_overrides)
-  model_regions_filtered  = { for k, v in local.model_regions_final : k => v if v != "unavailable" }
-  foundry_regions         = distinct(values(local.model_regions_filtered))
-  region_codes            = { for r in local.foundry_regions : lower(substr(replace(r, "-", ""), 0, 10)) => r }
-  foundry_region_codes    = { for r in local.foundry_regions : r => lower(substr(replace(r, "-", ""), 0, 10)) }
-  foundry_names           = { for r in local.foundry_regions : r => "aif-${local.foundry_region_codes[r]}-${local.suffix}" }
-  ai_project_names        = { for r in local.foundry_regions : r => "proj-${local.foundry_region_codes[r]}-${local.suffix}" }
-  app_service_plan        = "${var.name_prefix}-${local.suffix}-asp"
-  log_analytics_name      = "${var.name_prefix}-${local.suffix}-la"
-  app_insights_name       = "${var.name_prefix}-${local.suffix}-ai"
-  registry_name           = lower(replace("${var.name_prefix}${local.suffix}cosureg", "-", ""))
-  web_app_name            = "${var.name_prefix}-${local.suffix}-app"
-  key_vault_name          = "${var.name_prefix}-${local.suffix}-kv"
-  dockerfile_hash         = filesha256("../src/Dockerfile")
+  model_regions_overrides    = fileexists("${path.module}/${var.model_regions_file}") ? try(jsondecode(file("${path.module}/${var.model_regions_file}")).model_regions, {}) : {}
+  model_regions_final        = merge(var.model_regions, local.model_regions_overrides)
+  model_regions_filtered     = { for k, v in local.model_regions_final : k => v if v != "unavailable" }
+  foundry_regions            = distinct(values(local.model_regions_filtered))
+  region_codes               = { for r in local.foundry_regions : lower(substr(replace(r, "-", ""), 0, 10)) => r }
+  foundry_region_codes       = { for r in local.foundry_regions : r => lower(substr(replace(r, "-", ""), 0, 10)) }
+  foundry_names              = { for r in local.foundry_regions : r => "aif-${local.foundry_region_codes[r]}-${local.suffix}" }
+  ai_project_names           = { for r in local.foundry_regions : r => "proj-${local.foundry_region_codes[r]}-${local.suffix}" }
+  app_service_plan           = "${var.name_prefix}-${local.suffix}-asp"
+  log_analytics_name         = "${var.name_prefix}-${local.suffix}-la"
+  app_insights_name          = "${var.name_prefix}-${local.suffix}-ai"
+  registry_name              = lower(replace("${var.name_prefix}${local.suffix}cosureg", "-", ""))
+  web_app_name               = "${var.name_prefix}-${local.suffix}-app"
+  oss_worker_image_name      = "${var.name_prefix}-${local.suffix}-oss-worker"
+  key_vault_name             = "${var.name_prefix}-${local.suffix}-kv"
+  dockerfile_hash            = filesha256("../src/Dockerfile")
+  oss_worker_dockerfile_hash = fileexists("../src/oss_worker/Dockerfile") ? filesha256("../src/oss_worker/Dockerfile") : "missing"
 
   # Hash of application source & templates to trigger container rebuild when logic/UI changes
   # Combine Python files and HTML templates for source tracking
@@ -202,6 +204,7 @@ resource "azapi_resource" "storage" {
       supportsHttpsTrafficOnly = true
     }
   })
+
   identity {
     type = "SystemAssigned"
   }
@@ -311,8 +314,8 @@ resource "azapi_resource" "flux_2_pro_deployment" {
       raiPolicyName = "Microsoft.DefaultV2"
     }
     sku = {
-      name     = var.flux_2_pro_sku_name
-      capacity = var.flux_2_pro_sku_capacity
+      name     = try(var.model_specs["FLUX.2-pro"].sku_name, "GlobalStandard")
+      capacity = try(var.model_specs["FLUX.2-pro"].sku_capacity, 2)
     }
   })
 
@@ -321,7 +324,6 @@ resource "azapi_resource" "flux_2_pro_deployment" {
     update = "30m"
     delete = "30m"
   }
-
 }
 
 # DALL-E-3 deployment REMOVED - Permanent quota exhaustion (2/2 capacity used)
@@ -434,13 +436,14 @@ resource "null_resource" "docker_image_build" {
   # 5. ACR configuration changes
   # 6. Force rebuild on every apply (ensures latest fixes are always deployed)
   triggers = {
-    dockerfile_hash        = local.dockerfile_hash
-    app_source_hash        = local.app_source_hash
-    critical_services_hash = local.critical_services_hash
-    requirements_hash      = fileexists("../src/requirements.txt") ? filesha256("../src/requirements.txt") : "missing"
-    acr_id                 = azurerm_container_registry.acr.id
-    always_run             = timestamp()     # Forces provisioner to run on every apply
-    deployment_version     = "v2026.01.13.2" # Vision Analyst: coordinates via HTTPS
+    dockerfile_hash            = local.dockerfile_hash
+    oss_worker_dockerfile_hash = local.oss_worker_dockerfile_hash
+    app_source_hash            = local.app_source_hash
+    critical_services_hash     = local.critical_services_hash
+    requirements_hash          = fileexists("../src/requirements.txt") ? filesha256("../src/requirements.txt") : "missing"
+    acr_id                     = azurerm_container_registry.acr.id
+    always_run                 = timestamp()     # Forces provisioner to run on every apply
+    deployment_version         = "v2026.01.13.2" # Vision Analyst: coordinates via HTTPS
   }
 
   depends_on = [
@@ -532,16 +535,66 @@ resource "null_resource" "docker_image_build" {
       Write-Host "Verifying image in ACR..."
       $imgCheck = az acr repository show --name ${local.registry_name} --image ${local.web_app_name}:latest --query "name" -o tsv 2>$null
 
+      $verified = $false
       if ($LASTEXITCODE -eq 0 -and $imgCheck -eq "${local.web_app_name}") {
+        $verified = $true
         Write-Host "[VERIFIED] Image confirmed in ACR registry"
-        Write-Host ""
-        exit 0
       } else {
         Write-Host "[WARNING] Image verification failed but build succeeded" -ForegroundColor Yellow
         Write-Host "This may be a timing issue. Image should be available shortly."
-        Write-Host ""
-        exit 0
       }
+
+      # Optional: Build the AKS OSS worker image (Diffusers) when enabled.
+      $enableAksWorker = "${var.enable_oss_aks_worker ? "true" : "false"}"
+      if ($enableAksWorker -eq "true") {
+        Write-Host ""
+        Write-Host "=========================================="
+        Write-Host "Building OSS Worker Image (AKS GPU)"
+        Write-Host "=========================================="
+        Write-Host ""
+
+        Write-Host "Image: ${local.oss_worker_image_name}:latest"
+        Write-Host "Dockerfile: $srcPath/oss_worker/Dockerfile"
+        Write-Host "Source Path: $srcPath"
+        Write-Host ""
+
+        $maxAttempts2 = 3
+        $success2 = $false
+        for ($j = 1; $j -le $maxAttempts2; $j++) {
+          Write-Host "[INFO] ACR build (worker) attempt $j of $maxAttempts2"
+
+          az acr build `
+            --resource-group ${azurerm_resource_group.rg.name} `
+            --registry ${local.registry_name} `
+            --image ${local.oss_worker_image_name}:latest `
+            --file "$srcPath\oss_worker\Dockerfile" `
+            "$srcPath" `
+            --platform linux `
+            --no-logs
+
+          $exitCode2 = $LASTEXITCODE
+          if ($exitCode2 -eq 0) {
+            $success2 = $true
+            break
+          }
+
+          Write-Host "[WARN] Worker ACR build failed (exit $exitCode2)." -ForegroundColor Yellow
+          if ($j -lt $maxAttempts2) {
+            Write-Host "Retrying in 10 seconds..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 10
+          }
+        }
+
+        if (-not $success2) {
+          Write-Host "[ERROR] Worker ACR build failed after $maxAttempts2 attempts" -ForegroundColor Red
+          exit 1
+        }
+
+        Write-Host "[SUCCESS] OSS worker image built and pushed to ACR"
+      }
+
+      Write-Host ""
+      exit 0
     EOT
     interpreter = ["PowerShell", "-Command"]
     working_dir = path.module
@@ -644,9 +697,16 @@ resource "azurerm_linux_web_app" "app" {
     # (Chat models can use gpt_api_version separately.)
     AZURE_OPENAI_API_VERSION = "2024-02-01"
 
-    # Direct model APIs (FLUX images endpoint needs a newer preview api-version)
-    AZURE_OPENAI_IMAGES_API_VERSION = "2025-04-01-preview"
-    AZURE_OPENAI_SORA_API_VERSION   = "preview"
+    # Direct model APIs (FLUX images endpoint requires a supported images api-version)
+    # Verified working for FLUX.2-pro on Foundry hub endpoints: 2024-06-01
+    AZURE_OPENAI_IMAGES_API_VERSION = "2024-06-01"
+    # Rate-limit protection knobs for image generation (429 retries/backoff + concurrency cap)
+    AZURE_OPENAI_IMAGES_MAX_RETRIES               = "3"
+    AZURE_OPENAI_IMAGES_RETRY_BASE_SECONDS        = "1.5"
+    AZURE_OPENAI_IMAGES_RETRY_MAX_SECONDS         = "20"
+    AZURE_OPENAI_IMAGES_CONCURRENCY_LIMIT         = "2"
+    AZURE_OPENAI_IMAGES_API_VERSION_CACHE_SECONDS = "3600"
+    AZURE_OPENAI_SORA_API_VERSION                 = "preview"
 
     # Default endpoint/key for image service (FLUX.2-pro region)
     AZURE_OPENAI_ENDPOINT = local.model_endpoints["FLUX.2-pro"]
@@ -663,6 +723,44 @@ resource "azurerm_linux_web_app" "app" {
     AZURE_OPENAI_API_KEY_GPT_IMAGE     = "MANAGED_IDENTITY"
     AZURE_OPENAI_ENDPOINT_SORA         = local.model_endpoints["sora"]
     AZURE_OPENAI_API_KEY_SORA          = "MANAGED_IDENTITY"
+
+    # OSS baseline mode: local (default) generates CPU-safe baselines in-app via OSS libraries.
+    # Set to remote only if you want to call external OSS endpoints via OSS_*_BACKEND_URL.
+    # When the AKS OSS worker is enabled, force auto mode so the app prefers the worker.
+    OSS_BASELINE_MODE = var.enable_oss_aks_worker ? "auto" : var.oss_baseline_mode
+
+    # Optional: internal Azure worker for realistic OSS images (AKS GPU), OR an external worker URL override.
+    # The override allows you to run the worker in Container Apps/VM/etc even if AKS is disabled.
+    OSS_AZURE_WORKER_URL = (
+      trimspace(var.oss_azure_worker_url_override) != "" ? trimspace(var.oss_azure_worker_url_override) : (
+        var.enable_oss_aks_worker ? "http://${var.oss_aks_worker_lb_ip}" : ""
+      )
+    )
+    OSS_WORKER_AUTH_BEARER     = var.oss_aks_worker_auth_bearer
+    OSS_WORKER_TIMEOUT_SECONDS = "300"
+
+    # Thumbnail offload mode (local by default). Set to azure-worker to use OSS_AZURE_WORKER_URL/generate-thumbnail.
+    OSS_THUMBNAIL_MODE = var.oss_thumbnail_mode
+
+    # Optional: in-app Diffusers configuration for realistic open-source images (CPU by default).
+    # With OSS_BASELINE_MODE=auto, the app will use Diffusers when OSS_DIFFUSERS_MODEL_ID is set.
+    OSS_DIFFUSERS_MODEL_ID            = var.oss_diffusers_model_id
+    OSS_DIFFUSERS_DEVICE              = var.oss_diffusers_device
+    OSS_DIFFUSERS_NUM_INFERENCE_STEPS = tostring(var.oss_diffusers_num_inference_steps)
+    OSS_DIFFUSERS_GUIDANCE_SCALE      = tostring(var.oss_diffusers_guidance_scale)
+
+    # Optional remote OSS baseline image backend (used only when OSS_BASELINE_MODE=remote).
+    OSS_IMAGE_BACKEND_URL             = var.oss_image_backend_url
+    OSS_IMAGE_BACKEND_KIND            = var.oss_image_backend_kind
+    OSS_IMAGE_BACKEND_TIMEOUT_SECONDS = tostring(var.oss_image_backend_timeout_seconds)
+    # Prefer passing a Key Vault reference string rather than a raw token.
+    OSS_IMAGE_BACKEND_AUTH_BEARER = var.oss_image_backend_auth_bearer
+
+    # Optional remote OSS baseline video backend (used only when OSS_BASELINE_MODE=remote).
+    OSS_VIDEO_BACKEND_URL             = var.oss_video_backend_url
+    OSS_VIDEO_BACKEND_KIND            = var.oss_video_backend_kind
+    OSS_VIDEO_BACKEND_TIMEOUT_SECONDS = tostring(var.oss_video_backend_timeout_seconds)
+    OSS_VIDEO_BACKEND_AUTH_BEARER     = var.oss_video_backend_auth_bearer
 
     # Storage Connection String via Key Vault
     STORAGE_CONNECTION_STRING = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.kv.vault_uri}secrets/storage-connection-string)"
@@ -771,6 +869,13 @@ resource "azurerm_key_vault" "kv" {
   enable_rbac_authorization     = false
   public_network_access_enabled = var.key_vault_public_network_access_enabled
 
+  lifecycle {
+    precondition {
+      condition     = var.key_vault_public_network_access_enabled || var.enable_key_vault_private_endpoint
+      error_message = "Key Vault public network access is disabled, but enable_key_vault_private_endpoint=false. Terraform cannot manage Key Vault secrets from a public network in this mode. Either set key_vault_public_network_access_enabled=true (recommended for local dev with firewall deny + allowlisted IPs) or set enable_key_vault_private_endpoint=true and run Terraform from inside the VNet (or via VPN)."
+    }
+  }
+
   network_acls {
     # Keep the vault open initially so Terraform can read/write secrets during plan/apply.
     # The `null_resource.kv_network_rules` will add the current and webapp IPs and
@@ -793,10 +898,10 @@ resource "azurerm_key_vault" "kv" {
 
 # Key Vault Private Endpoint + Private DNS (optional)
 resource "azurerm_virtual_network" "kv_vnet" {
-  count               = var.enable_key_vault_private_endpoint ? 1 : 0
+  count = (var.enable_key_vault_private_endpoint || var.enable_oss_aks_worker) ? 1 : 0
   # Use a distinct name tied to the App Service region so replacement doesn't
   # delete subnets out from under dependent resources during the same apply.
-  name                = "${var.name_prefix}-${local.suffix}-vnet-${local.web_app_location}"
+  name = "${var.name_prefix}-${local.suffix}-vnet-${local.web_app_location}"
   # Swift (App Service) VNet integration requires the VNet to be in the same region as the Web App.
   location            = local.web_app_location
   resource_group_name = azurerm_resource_group.rg.name
@@ -810,11 +915,13 @@ resource "azurerm_subnet" "key_vault_private_endpoint" {
   virtual_network_name = azurerm_virtual_network.kv_vnet[0].name
   address_prefixes     = [var.key_vault_private_endpoint_subnet_cidr]
 
-  private_endpoint_network_policies_enabled = false
+  # AzureRM v4 migration: use the new enum-style field.
+  # Equivalent to private_endpoint_network_policies_enabled = false
+  private_endpoint_network_policies = "Disabled"
 }
 
 resource "azurerm_subnet" "app_service_integration" {
-  count                = var.enable_key_vault_private_endpoint ? 1 : 0
+  count                = (var.enable_key_vault_private_endpoint || var.enable_oss_aks_worker) ? 1 : 0
   name                 = "${var.name_prefix}-${local.suffix}-snet-app-int"
   resource_group_name  = azurerm_resource_group.rg.name
   virtual_network_name = azurerm_virtual_network.kv_vnet[0].name
@@ -845,8 +952,8 @@ resource "azurerm_private_dns_zone_virtual_network_link" "key_vault" {
 }
 
 resource "azurerm_private_endpoint" "key_vault" {
-  count               = var.enable_key_vault_private_endpoint ? 1 : 0
-  name                = "${var.name_prefix}-${local.suffix}-kv-pe"
+  count = var.enable_key_vault_private_endpoint ? 1 : 0
+  name  = "${var.name_prefix}-${local.suffix}-kv-pe"
   # Private Endpoints are regional and must match the VNet/subnet region.
   location            = local.web_app_location
   resource_group_name = azurerm_resource_group.rg.name
@@ -868,9 +975,269 @@ resource "azurerm_private_endpoint" "key_vault" {
 }
 
 resource "azurerm_app_service_virtual_network_swift_connection" "app_vnet_integration" {
-  count          = var.enable_key_vault_private_endpoint ? 1 : 0
+  count          = (var.enable_key_vault_private_endpoint || var.enable_oss_aks_worker) ? 1 : 0
   app_service_id = azurerm_linux_web_app.app.id
   subnet_id      = azurerm_subnet.app_service_integration[0].id
+}
+
+# Subnet for AKS nodes (optional, used by the OSS GPU worker)
+resource "azurerm_subnet" "aks_nodes" {
+  count                = var.enable_oss_aks_worker ? 1 : 0
+  name                 = "${var.name_prefix}-${local.suffix}-snet-aks"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.kv_vnet[0].name
+  address_prefixes     = [var.aks_nodes_subnet_cidr]
+}
+
+# AKS cluster with a GPU node pool (optional)
+resource "azurerm_kubernetes_cluster" "oss_worker" {
+  count               = var.enable_oss_aks_worker ? 1 : 0
+  name                = "${var.name_prefix}-${local.suffix}-aks"
+  location            = local.web_app_location
+  resource_group_name = azurerm_resource_group.rg.name
+  dns_prefix          = "${var.name_prefix}-${local.suffix}"
+
+  kubernetes_version = var.aks_kubernetes_version != "" ? var.aks_kubernetes_version : null
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  default_node_pool {
+    name           = "system"
+    vm_size        = var.aks_system_node_vm_size
+    node_count     = 1
+    vnet_subnet_id = azurerm_subnet.aks_nodes[0].id
+    type           = "VirtualMachineScaleSets"
+  }
+
+  network_profile {
+    network_plugin    = "azure"
+    load_balancer_sku = "standard"
+    service_cidr      = "10.52.0.0/16"
+    dns_service_ip    = "10.52.0.10"
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.oss_diffusers_model_id != ""
+      error_message = "enable_oss_aks_worker=true requires oss_diffusers_model_id to be set (Diffusers model id/path)."
+    }
+  }
+
+  depends_on = [azurerm_virtual_network.kv_vnet]
+}
+
+resource "azurerm_kubernetes_cluster_node_pool" "oss_worker_gpu" {
+  count                 = var.enable_oss_aks_worker ? 1 : 0
+  name                  = "gpunp"
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.oss_worker[0].id
+  vm_size               = var.aks_gpu_node_vm_size
+  node_count            = var.aks_gpu_node_count
+  mode                  = "User"
+  vnet_subnet_id        = azurerm_subnet.aks_nodes[0].id
+
+  node_labels = {
+    "workload" = "oss-diffusers"
+  }
+
+  node_taints = ["sku=gpu:NoSchedule"]
+}
+
+# Allow AKS kubelet identity to pull images from ACR
+resource "azurerm_role_assignment" "aks_acr_pull" {
+  count                = var.enable_oss_aks_worker ? 1 : 0
+  scope                = azurerm_container_registry.acr.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_kubernetes_cluster.oss_worker[0].kubelet_identity[0].object_id
+}
+
+# Deploy the OSS worker into AKS via az aks command invoke (no kubeconfig required locally)
+resource "null_resource" "deploy_oss_worker" {
+  count = var.enable_oss_aks_worker ? 1 : 0
+
+  triggers = {
+    always_run = timestamp()
+    image      = "${local.registry_name}.azurecr.io/${local.oss_worker_image_name}:latest"
+    model_id   = var.oss_diffusers_model_id
+    lb_ip      = var.oss_aks_worker_lb_ip
+  }
+
+  depends_on = [
+    null_resource.docker_image_build,
+    azurerm_kubernetes_cluster_node_pool.oss_worker_gpu,
+    azurerm_role_assignment.aks_acr_pull,
+    azurerm_app_service_virtual_network_swift_connection.app_vnet_integration,
+  ]
+
+  provisioner "local-exec" {
+    interpreter = ["pwsh", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]
+    command     = <<EOT
+      $ErrorActionPreference = "Stop"
+
+      $rg = "${azurerm_resource_group.rg.name}"
+      $aks = "${azurerm_kubernetes_cluster.oss_worker[0].name}"
+      $image = "${local.registry_name}.azurecr.io/${local.oss_worker_image_name}:latest"
+      $modelId = "${var.oss_diffusers_model_id}"
+      $lbIp = "${var.oss_aks_worker_lb_ip}"
+      $auth = "${var.oss_aks_worker_auth_bearer}"
+
+      $replicas = ${var.oss_aks_worker_replicas}
+      $preload = "${var.oss_aks_worker_preload ? "true" : "false"}"
+
+      $cacheEnabled = "${var.oss_aks_worker_cache_enabled ? "true" : "false"}"
+      $cacheSize = "${var.oss_aks_worker_cache_size}"
+      $cacheStorageClass = "${var.oss_aks_worker_cache_storage_class}"
+
+      $cachePvcYaml = ""
+      $cacheVolumesYaml = ""
+      $cacheVolumeMountsYaml = ""
+      $cacheEnvYaml = ""
+
+      if ($cacheEnabled -eq "true") {
+        $cachePvcYaml = @"
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hf-cache
+  namespace: oss-worker
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: $cacheStorageClass
+  resources:
+    requests:
+      storage: $cacheSize
+---
+"@
+
+        $cacheVolumesYaml = @"
+      volumes:
+      - name: hf-cache
+        persistentVolumeClaim:
+          claimName: hf-cache
+"@
+
+        $cacheVolumeMountsYaml = @"
+        volumeMounts:
+        - name: hf-cache
+          mountPath: /cache
+"@
+
+        $cacheEnvYaml = @"
+        - name: HF_HOME
+          value: "/cache/hf"
+        - name: HF_HUB_CACHE
+          value: "/cache/hf/hub"
+        - name: TRANSFORMERS_CACHE
+          value: "/cache/hf/transformers"
+        - name: DIFFUSERS_CACHE
+          value: "/cache/hf/diffusers"
+        - name: TORCH_HOME
+          value: "/cache/torch"
+"@
+      }
+
+      $yaml = @"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oss-worker
+---
+$cachePvcYaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oss-diffusers-worker
+  namespace: oss-worker
+spec:
+  replicas: $replicas
+  selector:
+    matchLabels:
+      app: oss-diffusers-worker
+  template:
+    metadata:
+      labels:
+        app: oss-diffusers-worker
+    spec:
+      nodeSelector:
+        agentpool: gpunp
+      tolerations:
+      - key: "sku"
+        operator: "Equal"
+        value: "gpu"
+        effect: "NoSchedule"
+$cacheVolumesYaml
+      containers:
+      - name: worker
+        image: $image
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+$cacheVolumeMountsYaml
+        env:
+        - name: OSS_DIFFUSERS_MODEL_ID
+          value: "$modelId"
+        - name: OSS_DIFFUSERS_DEVICE
+          value: "cuda"
+        - name: OSS_WORKER_PRELOAD
+          value: "$preload"
+        - name: OSS_DIFFUSERS_NUM_INFERENCE_STEPS
+          value: "25"
+        - name: OSS_DIFFUSERS_GUIDANCE_SCALE
+          value: "7.5"
+        - name: OSS_WORKER_AUTH_BEARER
+          value: "$auth"
+$cacheEnvYaml
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 18
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          timeoutSeconds: 2
+          failureThreshold: 6
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+          requests:
+            cpu: "500m"
+            memory: "2Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oss-diffusers-worker
+  namespace: oss-worker
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+spec:
+  type: LoadBalancer
+  loadBalancerIP: $lbIp
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+  selector:
+    app: oss-diffusers-worker
+"@
+
+      $tmp = New-TemporaryFile
+      Set-Content -LiteralPath $tmp -Value $yaml -Encoding UTF8
+
+      Write-Host "Deploying OSS worker to AKS..."
+      az aks command invoke --resource-group $rg --name $aks --command "kubectl apply -f $($tmp.Name)" --file $tmp.Name | Out-Null
+      Write-Host "OSS worker deployed. Internal endpoint: http://$lbIp"
+    EOT
+  }
 }
 
 # Wait for Key Vault to be ready and accessible
@@ -887,7 +1254,7 @@ data "http" "current_ip" {
 # Ensure Key Vault firewall is OPEN for Terraform operations
 # We force this to run every time to guarantee access
 resource "null_resource" "ensure_kv_open" {
-  count = var.enable_key_vault_private_endpoint ? 0 : 1
+  count = var.key_vault_public_network_access_enabled ? 1 : 0
   triggers = {
     always_run = timestamp()
   }
@@ -899,13 +1266,18 @@ resource "null_resource" "ensure_kv_open" {
     command     = <<EOT
       $kvName = "${azurerm_key_vault.kv.name}"
       $rg     = "${azurerm_resource_group.rg.name}"
+      $pnaEnabled = "${var.key_vault_public_network_access_enabled ? "true" : "false"}"
       
       Write-Host "Ensuring Key Vault $kvName is accessible..."
       # Force Allow default action to unblock Terraform
       az keyvault update --name $kvName --resource-group $rg --default-action Allow --bypass AzureServices | Out-Null
       
-      # Also ensure public access is enabled
-      az keyvault update --name $kvName --resource-group $rg --public-network-access Enabled | Out-Null
+      # Ensure public access is enabled only when configured.
+      if ($pnaEnabled -eq "true") {
+        az keyvault update --name $kvName --resource-group $rg --public-network-access Enabled | Out-Null
+      } else {
+        Write-Host "[KV] key_vault_public_network_access_enabled=false; not enabling public network access."
+      }
       
       Write-Host "Key Vault access enabled."
     EOT
@@ -915,7 +1287,7 @@ resource "null_resource" "ensure_kv_open" {
 # After Key Vault and Web App creation, tighten KV firewall to allow
 # only current public IP and Web App outbound IPs, then set default Deny.
 resource "null_resource" "kv_network_rules" {
-  count = var.enable_key_vault_private_endpoint ? 0 : 1
+  count = var.key_vault_public_network_access_enabled ? 1 : 0
   depends_on = [
     azurerm_key_vault.kv,
     azurerm_linux_web_app.app,
@@ -963,7 +1335,7 @@ data "azurerm_linux_web_app" "app_identity" {
 
 # External helper to ensure Key Vault has our current IP rule so Terraform can access secrets
 data "external" "ensure_kv_access" {
-  count = var.enable_key_vault_private_endpoint ? 0 : 1
+  count   = var.key_vault_public_network_access_enabled ? 1 : 0
   program = ["pwsh", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "./scripts/ensure_kv_network_rule.ps1"]
   query = {
     kv_name = local.key_vault_name

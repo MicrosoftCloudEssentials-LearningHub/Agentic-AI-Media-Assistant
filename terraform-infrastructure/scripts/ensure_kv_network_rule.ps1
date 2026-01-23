@@ -1,4 +1,11 @@
 Param(
+  # Terraform external data source supplies the query JSON via stdin.
+  # In PowerShell, piped stdin can be treated as pipeline input and parameter
+  # binding happens before the script body executes. Accept it explicitly to
+  # avoid "input object cannot be bound" failures.
+  [Parameter(Mandatory = $false, ValueFromPipeline = $true)]
+  [string]$stdin_json,
+
   [Parameter(Mandatory = $false)]
   [string]$kv_name,
 
@@ -11,7 +18,10 @@ Param(
 
 # Terraform external data source passes JSON via stdin.
 # For manual runs (or when stdin is empty), allow explicit params.
-$stdin = [Console]::In.ReadToEnd()
+$stdin = $stdin_json
+if (-not $stdin -or $stdin.Trim().Length -eq 0) {
+  $stdin = [Console]::In.ReadToEnd()
+}
 $input = $null
 if ($stdin -and $stdin.Trim().Length -gt 0) {
   try {

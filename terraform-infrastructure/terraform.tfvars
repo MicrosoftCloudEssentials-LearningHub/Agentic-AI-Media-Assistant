@@ -1,4 +1,4 @@
-resource_group_name  = "RG-AI-Media-DemoX1"
+resource_group_name  = "RG-AI-Media-DemoX2"
 location             = "eastus2"
 name_prefix          = "zava"
 app_service_location = "westus3"
@@ -75,7 +75,7 @@ model_specs = {
     model_version = "1"
     model_format  = "Black Forest Labs"
     sku_name      = "GlobalStandard"
-    sku_capacity  = 10
+    sku_capacity  = 4
   }
   "sora" = {
     model_name    = "sora"
@@ -97,5 +97,37 @@ lock_key_vault_network = false
 # Keep public access enabled initially so Terraform can still manage secrets from a laptop.
 # After you move Terraform execution into the VNet (or stop managing KV secrets in Terraform),
 # set `key_vault_public_network_access_enabled = false`.
-enable_key_vault_private_endpoint        = true
-key_vault_public_network_access_enabled  = true
+enable_key_vault_private_endpoint       = true
+key_vault_public_network_access_enabled = true
+
+# --- Realistic OSS image generation (AKS GPU worker) ---
+# NOTE: In this subscription/region, AKS creation currently fails due to VM SKU restrictions.
+# Keep this disabled unless/until you pick allowed SKUs and have quota in `app_service_location`.
+enable_oss_aks_worker = false
+
+# Prefer auto: uses AKS worker when configured, otherwise falls back to in-process OSS baseline.
+oss_baseline_mode = "auto"
+
+# Thumbnail generation mode. Use `azure-worker` to offload to an external worker at oss_azure_worker_url_override.
+oss_thumbnail_mode = "local"
+
+# Optional: external worker URL (Container App/VM) that runs src/oss_worker.
+# Example:
+# oss_azure_worker_url_override = "https://my-oss-worker.example.com"
+oss_azure_worker_url_override = ""
+
+# Example worker config (enable when ready):
+# oss_diffusers_model_id = "runwayml/stable-diffusion-v1-5"
+# oss_aks_worker_cache_enabled = true
+# oss_aks_worker_cache_size    = "50Gi"
+# oss_aks_worker_cache_storage_class = "azurefile-csi"
+
+# Realistic in-app OSS image generation via Diffusers (CPU). Keep sizes small for speed.
+oss_diffusers_model_id            = "runwayml/stable-diffusion-v1-5"
+oss_diffusers_device              = "cpu"
+oss_diffusers_num_inference_steps = 12
+oss_diffusers_guidance_scale      = 5.0
+
+# If you enable the worker in westus3, you may need to override node SKUs, e.g.:
+# aks_system_node_vm_size = "Standard_D2_v3"
+# aks_gpu_node_vm_size    = "Standard_NC24ads_A100_v4"  # if that's what your subscription allows

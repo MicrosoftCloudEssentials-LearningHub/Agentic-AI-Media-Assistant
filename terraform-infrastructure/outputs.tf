@@ -18,6 +18,21 @@ output "application_url" {
   description = "Primary host name for the App Service"
 }
 
+output "oss_aks_worker_enabled" {
+  value       = var.enable_oss_aks_worker
+  description = "Whether the AKS-hosted OSS Diffusers worker is enabled"
+}
+
+output "oss_aks_name" {
+  value       = var.enable_oss_aks_worker ? azurerm_kubernetes_cluster.oss_worker[0].name : ""
+  description = "AKS cluster name for the OSS worker (if enabled)"
+}
+
+output "oss_azure_worker_url" {
+  value       = var.enable_oss_aks_worker ? "http://${var.oss_aks_worker_lb_ip}" : ""
+  description = "Internal URL (VNet) for the OSS worker service (if enabled)"
+}
+
 output "ai_foundry_primary_region" {
   value       = local.primary_foundry_region
   description = "Region used for the primary (chat) Foundry account"

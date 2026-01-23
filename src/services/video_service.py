@@ -10,14 +10,15 @@ This is a workaround because:
 TODO: Once Sora-2 becomes available in Azure AI Foundry, replace this implementation
       with direct Sora-2 API calls for native video generation.
 """
+
+from __future__ import annotations
+
 import os
 import logging
 import uuid
 from datetime import datetime
 from typing import List, Dict, Optional, Literal
 from io import BytesIO
-import cv2
-import numpy as np
 from PIL import Image
 import requests
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
@@ -225,6 +226,9 @@ class VideoGenerationService:
             numpy array in BGR format for OpenCV, or None if failed
         """
         try:
+            import numpy as np  # type: ignore
+            import cv2  # type: ignore
+
             response = requests.get(image_url, timeout=30)
             response.raise_for_status()
             
@@ -256,6 +260,8 @@ class VideoGenerationService:
             Path to the generated video file, or None if failed
         """
         try:
+            import cv2  # type: ignore
+
             # Create temporary file path
             temp_dir = os.path.join(os.getcwd(), "temp_videos")
             os.makedirs(temp_dir, exist_ok=True)
