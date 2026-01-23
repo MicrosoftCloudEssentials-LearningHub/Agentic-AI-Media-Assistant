@@ -196,36 +196,19 @@ graph TD
      - **Background**: "Change the background to a beach scene" (routed to East US for fast generation)
      - **Thumbnail**: "Create a thumbnail with the text 'AMAZING'" (routed to East US)
      - **Multi-Step**: "Crop the car, put it on a race track background, and add the text 'SPEED' in red"
-     - **Video**: "Generate a video of a Scottish terrier" (Sweden Central - Sora)
+     - **Video**: 
+     
+         > Video of a bottle in different environments:
+         
+         https://github.com/user-attachments/assets/9f76cc5b-17de-40af-b6c7-b00ed07f5871
+
+         > "Generate a video of a Scottish terrier" (Sweden Central - Sora)
 
           <img width="1910" height="1081" alt="image" src="https://github.com/user-attachments/assets/6d91b79f-2fbc-44be-a0cb-0b07337c79ee" />
 
          https://github.com/user-attachments/assets/d882e712-e9c2-4674-ac3d-371b3cab5f8a
-
+         
      - **Document**: "Extract all text from this PDF" or "Summarize this document" (Sweden Central - FLUX.1-Kontext-pro)
-
-## Realistic OSS image generation on Azure (AKS GPU worker)
-
-The app includes an **in-process OSS baseline generator** for comparison/fallback. For more *photorealistic* OSS output while still using **open-source libraries** (Diffusers/torch), this repo supports running a **GPU-backed OSS worker** in your Azure subscription.
-
-- Option A (recommended): deploy the AKS worker via `terraform.tfvars`:
-  - `enable_oss_aks_worker = true`
-  - `oss_baseline_mode = "auto"` (preferred: uses the worker when reachable, otherwise falls back)
-  - `oss_diffusers_model_id = "<a Stable Diffusion / SDXL model id or a model path>"` (required when enabling AKS)
-  - Optional: `oss_aks_worker_auth_bearer = "<shared secret>"`
-- Option B: run the same worker elsewhere (Container Apps/VM/etc) and point the app at it:
-  - `oss_azure_worker_url_override = "https://<your-worker>"`
-  - Keep `enable_oss_aks_worker = false`
-
-> [!NOTE]
->  - The AKS worker is deployed as an **internal LoadBalancer** (private IP) and is called by the web app via VNet integration.
->  - AKS GPU node pools require an allowed GPU VM SKU + quota in your chosen region. If Terraform/AKS creation fails, either pick an allowed GPU SKU/region or use `oss_azure_worker_url_override`.
->  - Diffusion models are large. If `oss_diffusers_model_id` points to a remote registry (for example, a Hugging Face model id), the worker downloads weights on first use.
->  - To keep weights “always available” across pod restarts/reschedules, enable the persistent cache volume:
->    - `oss_aks_worker_cache_enabled = true`
->    - Optional sizing/tuning: `oss_aks_worker_cache_size = "50Gi"`, `oss_aks_worker_cache_storage_class = "azurefile-csi"`
->  - With cache enabled, the first worker pod warms the cache, and subsequent restarts reuse the same cached weights (no re-download).
->  - For lowest first-request latency after deploy, keep `oss_aks_worker_preload = true` so the worker loads the pipeline at startup.
 
 <!-- START BADGE -->
 <div align="center">
