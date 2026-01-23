@@ -5,7 +5,7 @@ Costa Rica
 [![GitHub](https://img.shields.io/badge/--181717?logo=github&logoColor=ffffff)](https://github.com/)
 [brown9804](https://github.com/brown9804)
 
-Last updated: 2026-01-16
+Last updated: 2026-01-20
 
 ----------
 
@@ -199,9 +199,32 @@ graph TD
      - **Video**: "Generate a 5-second video of a sunset over mountains" (Sweden Central - Sora)
      - **Document**: "Extract all text from this PDF" or "Summarize this document" (Sweden Central - FLUX.1-Kontext-pro)
 
+## Realistic OSS image generation on Azure (AKS GPU worker)
+
+The app includes an **in-process OSS baseline generator** for comparison/fallback. For more *photorealistic* OSS output while still using **open-source libraries** (Diffusers/torch), this repo supports running a **GPU-backed OSS worker** in your Azure subscription.
+
+- Option A (recommended): deploy the AKS worker via `terraform.tfvars`:
+  - `enable_oss_aks_worker = true`
+  - `oss_baseline_mode = "auto"` (preferred: uses the worker when reachable, otherwise falls back)
+  - `oss_diffusers_model_id = "<a Stable Diffusion / SDXL model id or a model path>"` (required when enabling AKS)
+  - Optional: `oss_aks_worker_auth_bearer = "<shared secret>"`
+- Option B: run the same worker elsewhere (Container Apps/VM/etc) and point the app at it:
+  - `oss_azure_worker_url_override = "https://<your-worker>"`
+  - Keep `enable_oss_aks_worker = false`
+
+> [!NOTE]
+>  - The AKS worker is deployed as an **internal LoadBalancer** (private IP) and is called by the web app via VNet integration.
+>  - AKS GPU node pools require an allowed GPU VM SKU + quota in your chosen region. If Terraform/AKS creation fails, either pick an allowed GPU SKU/region or use `oss_azure_worker_url_override`.
+>  - Diffusion models are large. If `oss_diffusers_model_id` points to a remote registry (for example, a Hugging Face model id), the worker downloads weights on first use.
+>  - To keep weights “always available” across pod restarts/reschedules, enable the persistent cache volume:
+>    - `oss_aks_worker_cache_enabled = true`
+>    - Optional sizing/tuning: `oss_aks_worker_cache_size = "50Gi"`, `oss_aks_worker_cache_storage_class = "azurefile-csi"`
+>  - With cache enabled, the first worker pod warms the cache, and subsequent restarts reuse the same cached weights (no re-download).
+>  - For lowest first-request latency after deploy, keep `oss_aks_worker_preload = true` so the worker loads the pipeline at startup.
+
 <!-- START BADGE -->
 <div align="center">
-  <img src="https://img.shields.io/badge/Total%20views-1500-limegreen" alt="Total views">
-  <p>Refresh Date: 2026-01-16</p>
+  <img src="https://img.shields.io/badge/Total%20views-1546-limegreen" alt="Total views">
+  <p>Refresh Date: 2026-01-20</p>
 </div>
 <!-- END BADGE -->

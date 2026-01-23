@@ -2,6 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# System deps for video encoding and OpenCV runtime on slim images
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set environment variables to avoid encoding issues
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONIOENCODING=utf-8

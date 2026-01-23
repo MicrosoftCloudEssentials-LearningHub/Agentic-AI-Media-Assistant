@@ -357,6 +357,10 @@
                     <input type="checkbox" id="explain-answer-toggle" style="margin:0;">
                     Explain answer
                 </label>
+                <label title="Include open-source baseline outputs (if configured)" style="display:flex; align-items:center; gap:6px; padding: 0 8px; color:#aaa; font-size: 12px;">
+                    <input type="checkbox" id="oss-toggle" style="margin:0;" checked>
+                    OSS
+                </label>
                 <input type="text" id="user-input" placeholder="Type your request here... (Ctrl+V to paste image)">
                 <button id="send-button" onclick="sendMessage()">Send</button>
             </div>
@@ -375,19 +379,45 @@
         const imagePreview = document.getElementById('image-preview');
         const explainToggle = document.getElementById('explain-toggle');
         const explainAnswerToggle = document.getElementById('explain-answer-toggle');
+        const ossToggle = document.getElementById('oss-toggle');
         
         let currentImageData = null;
         let currentFile = null; // { name, content_type, size_bytes, url, is_image }
         const inflightMessages = new Map(); // message_id -> { rawText, messageDiv, contentDiv }
         let isAwaitingResponse = false;
+        let lastRequestHint = null; // 'image' | 'video' | 'thumbnail' | null
 
         function setUiBusy(busy) {
             isAwaitingResponse = Boolean(busy);
-            if (userInput) userInput.disabled = isAwaitingResponse;
+            // Keep the input editable while a request is in-flight.
+            // Prevent sending via the send button + sendMessage guard.
+            if (userInput) userInput.disabled = false;
             if (sendButton) {
                 sendButton.disabled = isAwaitingResponse;
                 sendButton.textContent = isAwaitingResponse ? 'Working…' : 'Send';
             }
+        }
+
+        function inferRequestHint(text, actionObj) {
+            const raw = String(text ?? '').toLowerCase();
+            const action = actionObj && typeof actionObj.action === 'string' ? actionObj.action.toLowerCase() : '';
+
+            const combined = `${action} ${raw}`;
+
+            if (/(^|\s)(sora|video)(\s|$)/.test(combined) || /generate\s+video/.test(combined)) return 'video';
+            if (/(^|\s)(thumbnail)(\s|$)/.test(combined)) return 'thumbnail';
+            if (/(^|\s)(flux|image)(\s|$)/.test(combined) || /generate\s+image/.test(combined)) return 'image';
+            return null;
+        }
+
+        function streamingPlaceholder(agentName) {
+            const a = String(agentName ?? '').toLowerCase();
+            const hint = String(lastRequestHint ?? '').toLowerCase();
+
+            if (/(sora|video)/.test(a) || hint === 'video') return 'Generating video…';
+            if (/(thumbnail)/.test(a) || hint === 'thumbnail') return 'Generating thumbnail…';
+            if (/(flux|image)/.test(a) || hint === 'image') return 'Generating image…';
+            return 'Thinking…';
         }
 
         const SYSTEM_WELCOME_HTML = `
@@ -494,6 +524,13 @@
 
             let html = '';
             let inList = false;
+            let inDetails = false;
+
+            const collapsibleH2 = new Set([
+                'what i did',
+                'next steps',
+                'assumptions',
+            ]);
 
             const closeList = () => {
                 if (inList) {
@@ -502,20 +539,35 @@
                 }
             };
 
+            const closeDetails = () => {
+                if (inDetails) {
+                    closeList();
+                    html += '</div></details>';
+                    inDetails = false;
+                }
+            };
+
             for (const line of lines) {
                 const trimmed = String(line ?? '').trim();
 
                 if (trimmed === '---') {
-                    closeList();
+                    closeDetails();
                     html += '<hr class="md-hr">';
                     continue;
                 }
 
                 if (/^##\s+/.test(trimmed)) {
-                    closeList();
+                    closeDetails();
                     const title = trimmed.replace(/^##\s+/, '');
                     const safe = linkifyEscapedHtml(formatInlineMarkdownEscaped(escapeHtml(title)));
-                    html += `<div class="md-h2">${safe}</div>`;
+
+                    const key = String(title ?? '').trim().toLowerCase();
+                    if (collapsibleH2.has(key)) {
+                        html += `<details style="font-size: 12px; opacity: 0.95;"><summary>${safe}</summary><div style="margin-top: 8px;">`;
+                        inDetails = true;
+                    } else {
+                        html += `<div class="md-h2">${safe}</div>`;
+                    }
                     continue;
                 }
 
@@ -542,6 +594,7 @@
             }
 
             closeList();
+            closeDetails();
             return html;
         }
 
@@ -607,7 +660,67 @@
             return { mainText, explainAnswer: bullets.join('\n') };
         }
 
-        function renderMessageContent(contentDiv, text, imageData = null, videoUrl = null, explanation = null, answerExplanation = null, references = null, diagnostics = null, messageFormat = null) {
+        function splitOpenSourceSection(text) {
+            const raw = String(text ?? '');
+
+            // Find a markdown H2 titled exactly: "Open-source output"
+            const headingRe = /(^|\n)##\s+Open-source output\s*\n/i;
+            const match = headingRe.exec(raw);
+            if (!match || match.index < 0) {
+                return { mainText: raw, ossText: null };
+            }
+
+            // Compute where the heading line starts (the '#').
+            const headingStart = match.index + (match[1] ? match[1].length : 0);
+            let mainText = raw.slice(0, headingStart).trimEnd();
+
+            // If immediately preceded by a markdown hr block, strip it from the main text.
+            const hrSuffix = /\n\n---\s*$/;
+            if (hrSuffix.test(mainText)) {
+                mainText = mainText.replace(hrSuffix, '').trimEnd();
+            }
+
+            // Extract body after the heading line.
+            const afterHeading = raw.slice(headingStart);
+            const firstNewline = afterHeading.indexOf('\n');
+            const body = firstNewline >= 0 ? afterHeading.slice(firstNewline + 1).trim() : '';
+
+            return { mainText, ossText: body || null };
+        }
+
+        function extractMediaUrlsFromText(text) {
+            const raw = String(text ?? '');
+            const images = [];
+            const videos = [];
+            const seen = new Set();
+
+            // Capture common cases:
+            // - /static/foo.png
+            // - https://.../foo.mp4
+            // Avoid trailing punctuation/quotes/parens.
+            const imgRe = /((?:https?:\/\/[^\s<>"]+|\/static\/[^\s<>"]+)\.(?:png|jpg|jpeg|webp|gif))(?!\w)/ig;
+            const vidRe = /((?:https?:\/\/[^\s<>"]+|\/static\/[^\s<>"]+)\.(?:mp4|webm))(?!\w)/ig;
+
+            let m;
+            while ((m = imgRe.exec(raw)) !== null) {
+                const url = m[1].replace(/[\)\]\}\"'.,;:]+$/, '');
+                if (!seen.has(url)) {
+                    seen.add(url);
+                    images.push(url);
+                }
+            }
+            while ((m = vidRe.exec(raw)) !== null) {
+                const url = m[1].replace(/[\)\]\}\"'.,;:]+$/, '');
+                if (!seen.has(url)) {
+                    seen.add(url);
+                    videos.push(url);
+                }
+            }
+
+            return { images, videos };
+        }
+
+        function renderMessageContent(contentDiv, text, imageData = null, videoUrl = null, explanation = null, answerExplanation = null, references = null, diagnostics = null, messageFormat = null, ossText = null) {
             if (messageFormat === 'system_welcome') {
                 contentDiv.innerHTML = SYSTEM_WELCOME_HTML;
                 return;
@@ -615,16 +728,67 @@
 
             let html = looksLikeMarkdown(text) ? formatMarkdownLite(text) : formatText(text);
 
+            // If the backend didn't explicitly attach media fields but the text includes
+            // artifact URLs (e.g., "/static/....mp4"), auto-render them.
+            const inferred = extractMediaUrlsFromText(text);
+            const inferredImages = (!imageData && inferred.images && inferred.images.length) ? inferred.images : [];
+            const inferredVideos = (!videoUrl && inferred.videos && inferred.videos.length) ? inferred.videos : [];
+
+            if (ossText) {
+                const ossHtml = looksLikeMarkdown(ossText) ? formatMarkdownLite(ossText) : formatText(ossText);
+                html += `<br><br><details style="font-size: 12px; opacity: 0.95;"><summary>Open-source output</summary><div style="margin-top: 8px;">${ossHtml}</div></details>`;
+            }
+
             if (imageData) {
-                const imgSrc = String(imageData);
-                html += `<br><img src="${imgSrc}" class="message-image">`;
-                html += `<br><a href="${imgSrc}" download="image.png" class="download-btn">Download Image</a>`;
+                const images = Array.isArray(imageData) ? imageData : [imageData];
+                images.forEach((img, idx) => {
+                    const isObj = (img && typeof img === 'object' && !Array.isArray(img));
+                    const imgSrcRaw = isObj ? (img.src || img.url || img.image || '') : img;
+                    const label = isObj ? (img.label || img.title || null) : null;
+                    const imgSrc = String(imgSrcRaw || '');
+                    if (!imgSrc) return;
+                    const suffix = images.length > 1 ? `-${idx + 1}` : '';
+                    if (label) {
+                        html += `<br><div style="margin-top:10px; font-size: 12px; opacity: 0.85;">${escapeHtml(String(label))}</div>`;
+                    }
+                    html += `<br><img src="${imgSrc}" class="message-image">`;
+                    html += `<br><a href="${imgSrc}" download="image${suffix}.png" class="download-btn">Download Image${suffix}</a>`;
+                });
+            }
+
+            if (inferredImages.length) {
+                inferredImages.forEach((img, idx) => {
+                    const imgSrc = String(img);
+                    const suffix = inferredImages.length > 1 ? `-${idx + 1}` : '';
+                    html += `<br><img src="${imgSrc}" class="message-image">`;
+                    html += `<br><a href="${imgSrc}" download="image${suffix}.png" class="download-btn">Download Image${suffix}</a>`;
+                });
             }
 
             if (videoUrl) {
-                const v = encodeURI(String(videoUrl));
-                html += `<br><video controls src="${v}" class="message-video"></video>`;
-                html += `<br><a href="${v}" download="video.mp4" class="download-btn">Download Video</a>`;
+                const videos = Array.isArray(videoUrl) ? videoUrl : [videoUrl];
+                videos.forEach((vid, idx) => {
+                    const isObj = (vid && typeof vid === 'object' && !Array.isArray(vid));
+                    const vidSrcRaw = isObj ? (vid.src || vid.url || vid.video || '') : vid;
+                    const label = isObj ? (vid.label || vid.title || null) : null;
+                    const v = encodeURI(String(vidSrcRaw || ''));
+                    if (!v) return;
+                    const suffix = videos.length > 1 ? `-${idx + 1}` : '';
+                    if (label) {
+                        html += `<br><div style="margin-top:10px; font-size: 12px; opacity: 0.85;">${escapeHtml(String(label))}</div>`;
+                    }
+                    html += `<br><video controls src="${v}" class="message-video"></video>`;
+                    html += `<br><a href="${v}" download="video${suffix}.mp4" class="download-btn">Download Video${suffix}</a>`;
+                });
+            }
+
+            if (inferredVideos.length) {
+                inferredVideos.forEach((vid, idx) => {
+                    const v = encodeURI(String(vid));
+                    const suffix = inferredVideos.length > 1 ? `-${idx + 1}` : '';
+                    html += `<br><video controls src="${v}" class="message-video"></video>`;
+                    html += `<br><a href="${v}" download="video${suffix}.mp4" class="download-btn">Download Video${suffix}</a>`;
+                });
             }
 
             if (explanation) {
@@ -664,7 +828,10 @@
             const contentDiv = document.createElement('div');
             contentDiv.className = 'message-content';
             contentDiv.style.whiteSpace = 'pre-wrap';
-            contentDiv.innerHTML = '<span style="opacity:0.75; font-style: italic;">Thinking…</span>';
+            const placeholder = streamingPlaceholder(agentName);
+            // Consume the last request hint once we’ve shown the first placeholder.
+            lastRequestHint = null;
+            contentDiv.innerHTML = `<span style="opacity:0.75; font-style: italic;">${escapeHtml(placeholder)}</span>`;
 
             messageDiv.appendChild(contentDiv);
             messagesDiv.appendChild(messageDiv);
@@ -693,18 +860,20 @@
 
             if (!entry) {
                 const split = splitExplainAnswerSection(data.message);
-                addMessage(split.mainText, 'assistant', data.agent, data.image_data, data.video_url, data.explanation, split.explainAnswer, data.references, data.diagnostics);
+                const ossSplit = splitOpenSourceSection(split.mainText);
+                addMessage(ossSplit.mainText, 'assistant', data.agent, data.image_data, data.video_url, data.explanation, split.explainAnswer, data.references, data.diagnostics, ossSplit.ossText);
                 return;
             }
 
             entry.rawText = String(data.message ?? entry.rawText);
             const split = splitExplainAnswerSection(entry.rawText);
-            renderMessageContent(entry.contentDiv, split.mainText, data.image_data, data.video_url, data.explanation, split.explainAnswer, data.references, data.diagnostics, data.format);
+            const ossSplit = splitOpenSourceSection(split.mainText);
+            renderMessageContent(entry.contentDiv, ossSplit.mainText, data.image_data, data.video_url, data.explanation, split.explainAnswer, data.references, data.diagnostics, data.format, ossSplit.ossText);
             inflightMessages.delete(messageId);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
-        function addMessage(text, sender, agentName = null, imageData = null, videoUrl = null, explanation = null, answerExplanation = null, references = null, diagnostics = null) {
+        function addMessage(text, sender, agentName = null, imageData = null, videoUrl = null, explanation = null, answerExplanation = null, references = null, diagnostics = null, ossText = null) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${sender}`;
             
@@ -719,7 +888,7 @@
             messagesDiv.appendChild(messageDiv);
 
             const contentDiv = messageDiv.querySelector('.message-content');
-            renderMessageContent(contentDiv, text, imageData, videoUrl, explanation, answerExplanation, references, diagnostics, null);
+            renderMessageContent(contentDiv, text, imageData, videoUrl, explanation, answerExplanation, references, diagnostics, null, ossText);
 
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
@@ -728,6 +897,21 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function tryParseActionJson(text) {
+            const raw = String(text ?? '').trim();
+            if (!raw) return null;
+            if (!(raw.startsWith('{') && raw.endsWith('}'))) return null;
+            try {
+                const obj = JSON.parse(raw);
+                if (obj && typeof obj === 'object' && obj.action) {
+                    return obj;
+                }
+            } catch (_) {
+                // not JSON
+            }
+            return null;
         }
 
         function sendMessage() {
@@ -749,14 +933,24 @@
             // Send to server
             try {
                 setUiBusy(true);
-                ws.send(JSON.stringify({
+                const actionObj = tryParseActionJson(text);
+                lastRequestHint = inferRequestHint(text, actionObj);
+                const basePayload = {
                     message: text,
                     image: currentImageData,
                     file: currentFile,
                     stream: true,
                     explain: Boolean(explainToggle && explainToggle.checked),
-                    explain_answer: Boolean(explainAnswerToggle && explainAnswerToggle.checked)
-                }));
+                    explain_answer: Boolean(explainAnswerToggle && explainAnswerToggle.checked),
+                    include_oss: Boolean(ossToggle && ossToggle.checked)
+                };
+                if (actionObj) {
+                    // Merge action fields into the payload so the backend treats this
+                    // as an explicit tool/action request.
+                    Object.assign(basePayload, actionObj);
+                }
+
+                ws.send(JSON.stringify(basePayload));
             } catch (error) {
                 console.error('Error sending message:', error);
                 setUiBusy(false);
@@ -783,12 +977,34 @@
 
         // Paste Handling
         document.addEventListener('paste', function(e) {
-            const items = e.clipboardData.items;
-            for (let i = 0; i < items.length; i++) {
-                if (items[i].type.indexOf('image') !== -1) {
-                    const blob = items[i].getAsFile();
-                    handleFile(blob);
-                    break;
+            // Only intercept paste when the user is interacting with the input area.
+            const active = document.activeElement;
+            const inInputArea = (active === userInput) || (active && active.closest && active.closest('.input-area'));
+            if (!inInputArea) return;
+
+            const dt = e.clipboardData;
+            if (!dt) return;
+
+            // Prefer files when available (more reliable across browsers).
+            const files = dt.files ? Array.from(dt.files) : [];
+            if (files.length) {
+                const file = files.find(f => String(f.type || '').startsWith('image/')) || files[0];
+                if (file) {
+                    e.preventDefault();
+                    handleFile(file);
+                    return;
+                }
+            }
+
+            const items = dt.items ? Array.from(dt.items) : [];
+            for (const item of items) {
+                if (item && item.kind === 'file' && String(item.type || '').startsWith('image/')) {
+                    const blob = item.getAsFile();
+                    if (blob) {
+                        e.preventDefault();
+                        handleFile(blob);
+                        return;
+                    }
                 }
             }
         });

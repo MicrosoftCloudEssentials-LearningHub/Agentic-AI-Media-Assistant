@@ -3,6 +3,7 @@ import logging
 import json
 import asyncio
 import traceback
+import re
 from typing import Any, Dict, Optional
 from datetime import datetime
 import uuid
@@ -30,7 +31,11 @@ from services.document_extractor import DocumentExtractor
 
 # Load environment variables
 if not is_running_in_azure():
-    load_dotenv()
+    try:
+        repo_root = Path(__file__).resolve().parent.parent
+        load_dotenv(dotenv_path=repo_root / ".env")
+    except Exception:
+        load_dotenv()
 
 # Configure comprehensive logging
 logging.basicConfig(
@@ -110,17 +115,33 @@ direct_model_service: Optional[DirectModelService] = None
 file_service = FileService()
 document_extractor = DocumentExtractor()
 
+# Concurrency limiter for direct image generation to avoid Azure rate limits.
+_flux_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_flux_semaphore() -> asyncio.Semaphore:
+    global _flux_semaphore
+    if _flux_semaphore is None:
+        try:
+            limit = int(os.getenv("AZURE_OPENAI_FLUX_MAX_CONCURRENCY", "1"))
+        except Exception:
+            limit = 1
+        if limit <= 0:
+            limit = 1
+        _flux_semaphore = asyncio.Semaphore(limit)
+    return _flux_semaphore
+
 try:
     # Use Azure AI Agents - let them handle everything
     logger.info("Initializing Hybrid Agent Service (Azure AI Agents + Fallback)")
     orchestrator = HybridAgentService()
     
     if orchestrator.orchestrator_agent:
-        logger.info("✅ Agent service initialized successfully")
+        logger.info("Agent service initialized successfully")
         logger.info(f"  - Orchestrator Agent ID: {orchestrator.orchestrator_agent.id}")
         logger.info("  - Orchestrator handles all routing with AI-powered decision making")
     else:
-        logger.warning("⚠️ Agent service initialized with fallback mode")
+        logger.warning("Agent service initialized with fallback mode")
         logger.warning("  - Azure AI Agents unavailable, using local fallback responses")
         orchestrator_error = "Azure AI Agents unavailable - using fallback mode"
 
@@ -159,15 +180,30 @@ def _try_parse_action_dict(text: str) -> Optional[Dict[str, Any]]:
     candidate = _strip_json_fences(text)
     if not candidate:
         return None
-    # Fast path: only attempt JSON parse when it looks like an object
-    if not (candidate.lstrip().startswith("{") and candidate.rstrip().endswith("}")):
-        return None
-    try:
-        obj = json.loads(candidate)
-    except Exception:
-        return None
-    if isinstance(obj, dict) and obj.get("action"):
-        return obj
+    decoder = json.JSONDecoder()
+
+    # Fast path: whole-string JSON object
+    stripped = candidate.strip()
+    if stripped.startswith("{"):
+        try:
+            obj = json.loads(stripped)
+            if isinstance(obj, dict) and obj.get("action"):
+                return obj
+        except Exception:
+            pass
+
+    # Robust path: find the first decodable JSON object within surrounding text.
+    # This enables parsing when the agent returns an action JSON plus extra explanation.
+    max_scan = min(len(candidate), 2000)
+    scan_text = candidate[:max_scan]
+    starts: list[int] = [i for i, ch in enumerate(scan_text) if ch == "{"]
+    for start in starts[:10]:
+        try:
+            obj, _end = decoder.raw_decode(candidate[start:])
+        except Exception:
+            continue
+        if isinstance(obj, dict) and obj.get("action"):
+            return obj
     return None
 
 
@@ -198,7 +234,11 @@ def _try_infer_action_from_user_message(text: str) -> Optional[Dict[str, Any]]:
 
     # Video intent
     if any(k in lowered for k in [" video", "video ", " video.", "sora"]):
-        return {"action": "call_sora", "prompt": raw}
+        payload: Dict[str, Any] = {"action": "call_sora", "prompt": raw}
+        inferred = _infer_video_duration_seconds_from_prompt(raw)
+        if inferred is not None:
+            payload["duration"] = inferred
+        return payload
 
     # Image intent (thumbnail/logo/etc.)
     image_keywords = [" image", "image ", " image.", "thumbnail", "poster", "banner", "logo", "cover"]
@@ -209,6 +249,50 @@ def _try_infer_action_from_user_message(text: str) -> Optional[Dict[str, Any]]:
         return {"action": "call_flux", "prompt": raw}
 
     return None
+
+
+def _infer_video_duration_seconds_from_prompt(text: str) -> Optional[int]:
+    """Infer an integer duration (seconds) from a free-form prompt.
+
+    Supported examples:
+      - "a 5 second video"
+      - "a 5-second clip"
+      - "make it 5s"
+      - "for 7 seconds"
+    """
+
+    t = (text or "").strip().lower()
+    if not t:
+        return None
+
+    # Prefer explicit seconds units; keep it conservative to avoid false matches.
+    patterns = [
+        r"\b(\d{1,3})(?:\.\d+)?\s*(?:seconds?|secs?|s)\b",
+        r"\b(\d{1,3})(?:\.\d+)?\s*-\s*(?:seconds?|secs?)\b",
+        r"\b(\d{1,3})(?:\.\d+)?-second\b",
+    ]
+    for pat in patterns:
+        m = re.search(pat, t)
+        if not m:
+            continue
+        try:
+            return int(float(m.group(1)))
+        except Exception:
+            continue
+
+    return None
+
+
+def _normalize_video_duration_seconds(seconds: Optional[int], *, default: int = 3) -> int:
+    try:
+        value = int(seconds) if seconds is not None else int(default)
+    except Exception:
+        value = int(default)
+
+    # Keep a reasonable guardrail; Sora/worker backends may enforce their own limits.
+    if value <= 0:
+        value = int(default)
+    return int(max(1, min(value, 20)))
 
 
 def _extract_first_media_url_or_data_uri(model_result: Dict[str, Any]) -> Optional[str]:
@@ -303,6 +387,171 @@ def _looks_like_generation_request(text: str) -> bool:
     return any(k in lowered for k in ["image", "thumbnail", "poster", "banner", "logo", "cover", "video", "sora"])
 
 
+def _looks_like_background_removal_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered.strip():
+        return False
+    return any(
+        k in lowered
+        for k in [
+            "remove background",
+            "remove the background",
+            "transparent background",
+            "make background transparent",
+            "cut out",
+            "cutout",
+            "bg remove",
+            "background removal",
+        ]
+    )
+
+
+def _looks_like_blur_background_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered.strip():
+        return False
+    return any(k in lowered for k in ["blur background", "background blur", "portrait mode", "bokeh", "defocus background"]) and not _looks_like_background_removal_request(text)
+
+
+def _looks_like_blur_faces_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered.strip():
+        return False
+    return any(k in lowered for k in ["blur face", "blur faces", "anonymize", "hide face", "privacy blur", "pixelate face", "censor face"])
+
+
+def _infer_filter_name(text: str) -> Optional[str]:
+    lowered = (text or "").lower()
+    if not lowered.strip():
+        return None
+    if any(k in lowered for k in ["edge detect", "edge-detect", "edges", "canny", "outline"]):
+        return "edge"
+    if any(k in lowered for k in ["sharpen", "sharper"]):
+        return "sharpen"
+    if any(k in lowered for k in ["denoise", "reduce noise", "remove noise"]):
+        return "denoise"
+    if any(k in lowered for k in ["cartoon", "toon"]):
+        return "cartoon"
+    if any(k in lowered for k in ["posterize", "posterise", "poster"]):
+        return "posterize"
+    return None
+
+
+def _looks_like_filter_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered.strip():
+        return False
+    return (_infer_filter_name(text) is not None) or any(k in lowered for k in ["apply filter", "filter this image"])
+
+
+def _looks_like_thumbnail_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered.strip():
+        return False
+    return any(
+        k in lowered
+        for k in [
+            "thumbnail",
+            "make a thumbnail",
+            "create a thumbnail",
+            "youtube thumbnail",
+            "avatar",
+            "profile picture",
+            "profile photo",
+        ]
+    )
+
+
+def _infer_thumbnail_size(text: str) -> str:
+    lowered = (text or "").lower()
+    args = _infer_transform_args(text)
+    w = args.get("width")
+    h = args.get("height")
+    try:
+        if w and h:
+            return f"{int(w)}x{int(h)}"
+    except Exception:
+        pass
+
+    aspect = str(args.get("aspect") or "").strip().lower()
+
+    if "youtube" in lowered or "16:9" in lowered or aspect in {"16:9", "16x9"}:
+        return "1280x720"
+    if "story" in lowered or "9:16" in lowered or aspect in {"9:16", "9x16"}:
+        return "1080x1920"
+    if "instagram" in lowered and ("post" in lowered or "square" in lowered or aspect in {"1:1", "1x1"}):
+        return "1080x1080"
+    if aspect in {"1:1", "1x1"}:
+        return "1024x1024"
+    if aspect in {"4:5", "4x5"}:
+        return "1080x1350"
+    return "1024x1024"
+
+
+def _looks_like_enhance_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered.strip():
+        return False
+    return any(
+        k in lowered
+        for k in [
+            "enhance",
+            "improve quality",
+            "make this look better",
+            "increase clarity",
+            "sharpen",
+            "sharper",
+            "more vibrant",
+        ]
+    )
+
+
+def _infer_transform_args(text: str) -> Dict[str, Any]:
+    raw = (text or "")
+    lowered = raw.lower()
+    out: Dict[str, Any] = {}
+
+    if any(k in lowered for k in ["pad", "letterbox", "add padding"]):
+        out["mode"] = "pad"
+    elif any(k in lowered for k in ["crop", "center crop", "trim"]):
+        out["mode"] = "crop"
+
+    # Common aspect ratios
+    if any(k in lowered for k in ["square", "1:1", "1x1"]):
+        out["aspect"] = "1:1"
+    else:
+        import re
+
+        m = re.search(r"(\d+)\s*[:x]\s*(\d+)", lowered)
+        if m:
+            a = int(m.group(1))
+            b = int(m.group(2))
+            if a > 0 and b > 0 and a <= 32 and b <= 32:
+                out["aspect"] = f"{a}:{b}"
+
+    # Target size WxH
+    try:
+        import re
+
+        m2 = re.search(r"(\d{2,4})\s*x\s*(\d{2,4})", lowered)
+        if m2:
+            out["width"] = int(m2.group(1))
+            out["height"] = int(m2.group(2))
+    except Exception:
+        pass
+
+    return out
+
+
+def _looks_like_transform_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered.strip():
+        return False
+    if any(k in lowered for k in ["resize", "crop", "pad", "letterbox", "aspect ratio", "16:9", "9:16", "4:5", "1:1", "square"]):
+        return True
+    return False
+
+
 def _allowed_image_sizes_from_env() -> list[str]:
     raw = (os.getenv("AZURE_OPENAI_ALLOWED_IMAGE_SIZES") or "").strip()
     if raw:
@@ -323,6 +572,155 @@ def _is_allowed_image_sizes_question(text: str) -> bool:
     return bool(wants_sizes and is_question)
 
 
+def _infer_prompt_clarifying_questions(
+    *,
+    action: str,
+    prompt: str,
+    action_payload: Dict[str, Any],
+) -> list[str]:
+    """Return up to 3 targeted questions when a media prompt is underspecified."""
+    prompt_text = (prompt or "").strip()
+    prompt_l = prompt_text.lower()
+    questions: list[str] = []
+
+    # Basic tokenization for "subject exists" heuristic.
+    words = re.findall(r"[a-zA-Z0-9']+", prompt_l)
+    stop = {
+        "a",
+        "an",
+        "the",
+        "of",
+        "to",
+        "and",
+        "or",
+        "in",
+        "on",
+        "with",
+        "for",
+        "please",
+        "make",
+        "create",
+        "generate",
+        "draw",
+        "build",
+        "design",
+        "image",
+        "picture",
+        "photo",
+        "thumbnail",
+        "poster",
+        "banner",
+        "logo",
+        "cover",
+        "video",
+        "clip",
+    }
+    meaningful = [w for w in words if w not in stop]
+    has_subject_signal = len(meaningful) >= 2 or any(w in prompt_l for w in ["apple", "cat", "dog", "person", "people", "product", "logo", "car", "house"])
+
+    if not has_subject_signal:
+        questions.append("What’s the main subject? (e.g., ‘a green apple’, ‘a dog wearing sunglasses’, ‘company logo for X’)")
+
+    # Style
+    style_terms = [
+        "photorealistic",
+        "photo",
+        "realistic",
+        "cinematic",
+        "studio",
+        "vector",
+        "flat",
+        "minimal",
+        "illustration",
+        "cartoon",
+        "anime",
+        "watercolor",
+        "oil painting",
+        "3d",
+        "render",
+    ]
+    if not any(t in prompt_l for t in style_terms):
+        questions.append("What style do you want? (photorealistic, illustration, vector/flat, cinematic, etc.)")
+
+    # Background / setting
+    bg_terms = ["background", "on a", "in a", "studio", "outdoors", "plain", "solid", "transparent", "white background", "black background"]
+    if not any(t in prompt_l for t in bg_terms):
+        questions.append("What background/setting? (plain white, transparent, studio, outdoors, on a table, etc.)")
+
+    # Subject-specific detail: apple color is a common ambiguity.
+    if "apple" in prompt_l and not any(c in prompt_l for c in ["green", "red", "yellow", "golden", "granny smith"]):
+        questions.insert(0, "What color should the apple be? (green/red/yellow)")
+
+    # Format knobs: only ask if the user didn’t explicitly set them.
+    if action in {"call_flux", "call_flux_kontext"}:
+        prompt_mentions_format = any(k in prompt_l for k in ["thumbnail", "banner", "poster", "cover", "widescreen", "16:9", "9:16"])
+        if prompt_mentions_format and "size" not in action_payload:
+            questions.append("What image size/aspect? (1024x1024, 1792x1024, 1024x1792)")
+
+    if action == "call_sora":
+        inferred_duration = None
+        if "duration" not in action_payload:
+            inferred_duration = _infer_video_duration_seconds_from_prompt(action_payload.get("prompt") or user_text or "")
+
+        if "duration" not in action_payload and inferred_duration is None:
+            questions.append("How long should the video be (seconds)?")
+        if "resolution" not in action_payload and not any(k in prompt_l for k in ["1080", "720", "4k", "1920x1080", "1280x720"]):
+            questions.append("What resolution/aspect? (e.g., 1920x1080, 1080x1920)")
+
+    # Keep it lightweight: max 3.
+    out: list[str] = []
+    for q in questions:
+        if q not in out:
+            out.append(q)
+        if len(out) >= 3:
+            break
+    return out
+
+
+def _should_prompt_for_media_clarifications(
+    *,
+    action: str,
+    user_text: Optional[str],
+    action_payload: Dict[str, Any],
+) -> bool:
+    """Only ask clarifying questions when the user explicitly wants refinement.
+
+    This keeps first-time generations fast, and uses questions as an optional
+    accuracy tool when the user asks to improve/regenerate.
+    """
+
+    if bool(action_payload.get("clarify") or action_payload.get("ask_questions")):
+        return True
+
+    text = (user_text or action_payload.get("prompt") or "").strip().lower()
+    if not text:
+        return False
+
+    # Explicit refinement / dissatisfaction signals.
+    triggers = [
+        "improve",
+        "improved",
+        "make it better",
+        "better",
+        "not happy",
+        "unhappy",
+        "wrong",
+        "fix",
+        "refine",
+        "tweak",
+        "adjust",
+        "change it",
+        "try again",
+        "regenerate",
+        "redo",
+        "another version",
+        "variation",
+        "ask questions",
+        "ask me",
+    ]
+    return any(t in text for t in triggers)
+
+
 async def _ensure_direct_model_service() -> DirectModelService:
     global direct_model_service
     if direct_model_service is None:
@@ -336,6 +734,7 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
     prompt = (action_payload.get("prompt") or "").strip()
     wants_explain = bool(action_payload.get("explain", False))
     wants_explain_answer = bool(action_payload.get("explain_answer", False))
+    include_oss = bool(action_payload.get("include_oss", True))
 
     if not action:
         return {
@@ -361,6 +760,26 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
             "diagnostics": {"action_payload": action_payload},
         }
 
+    if action in {
+        "remove_background",
+        "blur_background",
+        "blur_faces",
+        "apply_filter",
+        "transform_image",
+        "generate_thumbnail",
+        "enhance_image",
+    } and not (action_payload.get("image_data") or action_payload.get("image")):
+        return {
+            "type": "error",
+            "message": _format_standard_reply(
+                answer="I couldn’t edit the image because the request is missing 'image_data'.",
+                actions=[f"Validated payload for {action}"],
+                next_steps=["Attach an image and try again"],
+                assumptions=["The client intended to edit an attached image"],
+            ),
+            "diagnostics": {"action_payload": action_payload},
+        }
+
     # Optional parameters
     size = (action_payload.get("size") or "1024x1024").strip()
     duration = action_payload.get("duration")
@@ -369,28 +788,410 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
     svc = await _ensure_direct_model_service()
 
     try:
+        if action in {
+            "remove_background",
+            "blur_background",
+            "blur_faces",
+            "apply_filter",
+            "transform_image",
+            "generate_thumbnail",
+            "enhance_image",
+        } and not include_oss:
+            return {
+                "type": "error",
+                "message": _format_standard_reply(
+                    answer="Open-source edits are disabled (OSS toggle is off).",
+                    actions=["Checked OSS toggle"],
+                    next_steps=["Enable the OSS checkbox and try again"],
+                    assumptions=["You only want OSS media edits when explicitly enabled"],
+                ),
+                "diagnostics": {"action": action, "include_oss": include_oss},
+            }
+
+        if action == "remove_background":
+            image_input = action_payload.get("image_data") or action_payload.get("image")
+            oss_result = await asyncio.to_thread(svc.remove_background_open_source, image_input)
+            oss_ok = oss_result.get("status") == "success"
+            edited = _extract_first_media_url_or_data_uri(oss_result) if oss_ok else None
+
+            if not oss_ok or not edited:
+                return {
+                    "type": "error",
+                    "message": _format_standard_reply(
+                        answer="Background removal failed.",
+                        actions=["Attempted open-source background removal"],
+                        next_steps=["Try a different image", "Try a higher-contrast subject"],
+                        assumptions=["The image data is valid"],
+                    ),
+                    "diagnostics": {"action": action, "open_source": oss_result},
+                }
+
+            return {
+                "type": "agent_response",
+                "agent": "OSS Image Edit",
+                "message": _format_standard_reply(
+                    answer="Removed the background and returned a transparent PNG.",
+                    actions=["Ran open-source background removal"],
+                    next_steps=["Download the PNG", "Try another edit request"],
+                    assumptions=["The image contains a reasonably separable foreground subject"],
+                ),
+                "image_data": [edited],
+                "references": [
+                    {"type": "tool_action", "value": action},
+                    {"type": "baseline", "value": oss_result.get("model", "oss")},
+                ],
+                "explanation": (
+                    "High-level explanation (not internal chain-of-thought):\n"
+                    "1) I detected a background-removal edit request.\n"
+                    "2) I ran a local open-source segmentation baseline.\n"
+                    "3) I returned a transparent PNG."
+                )
+                if wants_explain
+                else None,
+                "diagnostics": {"action": action, "open_source": oss_result},
+            }
+
+        if action == "blur_background":
+            image_input = action_payload.get("image_data") or action_payload.get("image")
+            oss_result = await asyncio.to_thread(svc.blur_background_open_source, image_input)
+            oss_ok = oss_result.get("status") == "success"
+            edited = _extract_first_media_url_or_data_uri(oss_result) if oss_ok else None
+
+            if not oss_ok or not edited:
+                return {
+                    "type": "error",
+                    "message": _format_standard_reply(
+                        answer="Background blur failed.",
+                        actions=["Attempted open-source background blur"],
+                        next_steps=["Try a different image", "Ensure the subject is centered and clear"],
+                        assumptions=["The image data is valid"],
+                    ),
+                    "diagnostics": {"action": action, "open_source": oss_result},
+                }
+
+            return {
+                "type": "agent_response",
+                "agent": "OSS Image Edit",
+                "message": _format_standard_reply(
+                    answer="Blurred the background while keeping the subject sharp.",
+                    actions=["Ran open-source background blur"],
+                    next_steps=["Download the image", "Try another edit request"],
+                    assumptions=["Foreground/background separation is reasonably clear"],
+                ),
+                "image_data": [edited],
+                "references": [
+                    {"type": "tool_action", "value": action},
+                    {"type": "baseline", "value": oss_result.get("model", "oss")},
+                ],
+                "diagnostics": {"action": action, "open_source": oss_result},
+            }
+
+        if action == "blur_faces":
+            image_input = action_payload.get("image_data") or action_payload.get("image")
+            oss_result = await asyncio.to_thread(svc.blur_faces_open_source, image_input)
+            oss_ok = oss_result.get("status") == "success"
+            edited = _extract_first_media_url_or_data_uri(oss_result) if oss_ok else None
+
+            if not oss_ok or not edited:
+                return {
+                    "type": "error",
+                    "message": _format_standard_reply(
+                        answer="Face blurring failed.",
+                        actions=["Attempted open-source face blurring"],
+                        next_steps=["Try a clearer face image", "Try a higher-resolution photo"],
+                        assumptions=["The image data is valid"],
+                    ),
+                    "diagnostics": {"action": action, "open_source": oss_result},
+                }
+
+            face_count = oss_result.get("faces")
+            return {
+                "type": "agent_response",
+                "agent": "OSS Image Edit",
+                "message": _format_standard_reply(
+                    answer=f"Blurred detected faces ({face_count} found).",
+                    actions=["Ran open-source face detection + blur"],
+                    next_steps=["Download the image", "If a face was missed, try a closer crop"],
+                    assumptions=["Faces are frontal enough for Haar detection"],
+                ),
+                "image_data": [edited],
+                "references": [
+                    {"type": "tool_action", "value": action},
+                    {"type": "baseline", "value": oss_result.get("model", "oss")},
+                ],
+                "diagnostics": {"action": action, "open_source": oss_result},
+            }
+
+        if action == "apply_filter":
+            image_input = action_payload.get("image_data") or action_payload.get("image")
+            filter_name = (action_payload.get("filter") or "").strip()
+            if not filter_name:
+                return {
+                    "type": "error",
+                    "message": _format_standard_reply(
+                        answer="I couldn’t apply a filter because the request is missing 'filter'.",
+                        actions=["Validated payload for apply_filter"],
+                        next_steps=["Choose one: edge, sharpen, denoise, cartoon, posterize"],
+                        assumptions=["The client intended to apply a known filter"],
+                    ),
+                    "diagnostics": {"action_payload": action_payload},
+                }
+
+            oss_result = await asyncio.to_thread(svc.apply_filter_open_source, image_input, filter_name)
+            oss_ok = oss_result.get("status") == "success"
+            edited = _extract_first_media_url_or_data_uri(oss_result) if oss_ok else None
+
+            if not oss_ok or not edited:
+                return {
+                    "type": "error",
+                    "message": _format_standard_reply(
+                        answer=f"Filter '{filter_name}' failed.",
+                        actions=["Attempted open-source filter"],
+                        next_steps=["Try a different filter", "Check supported filters"],
+                        assumptions=["The image data is valid"],
+                    ),
+                    "diagnostics": {"action": action, "open_source": oss_result},
+                }
+
+            return {
+                "type": "agent_response",
+                "agent": "OSS Image Edit",
+                "message": _format_standard_reply(
+                    answer=f"Applied filter: {filter_name}.",
+                    actions=["Ran open-source filter"],
+                    next_steps=["Download the image", "Try another filter"],
+                    assumptions=["The selected filter matches your intent"],
+                ),
+                "image_data": [edited],
+                "references": [
+                    {"type": "tool_action", "value": action},
+                    {"type": "baseline", "value": oss_result.get("model", "oss")},
+                ],
+                "diagnostics": {"action": action, "open_source": oss_result},
+            }
+
+        if action == "transform_image":
+            image_input = action_payload.get("image_data") or action_payload.get("image")
+            args = {}
+            for k in ("mode", "aspect", "width", "height"):
+                if k in action_payload and action_payload.get(k) is not None:
+                    args[k] = action_payload.get(k)
+
+            oss_result = await asyncio.to_thread(svc.transform_image_open_source, image_input, **args)
+            oss_ok = oss_result.get("status") == "success"
+            edited = _extract_first_media_url_or_data_uri(oss_result) if oss_ok else None
+
+            if not oss_ok or not edited:
+                return {
+                    "type": "error",
+                    "message": _format_standard_reply(
+                        answer="Image transform failed.",
+                        actions=["Attempted open-source transform"],
+                        next_steps=["Try a different target aspect/size"],
+                        assumptions=["The image data is valid"],
+                    ),
+                    "diagnostics": {"action": action, "open_source": oss_result},
+                }
+
+            transform_info = oss_result.get("transform") or {}
+            return {
+                "type": "agent_response",
+                "agent": "OSS Image Edit",
+                "message": _format_standard_reply(
+                    answer=f"Transformed image ({transform_info.get('src_size')} → {transform_info.get('dst_size')}).",
+                    actions=["Ran open-source crop/resize/pad transform"],
+                    next_steps=["Download the image", "Tell me your exact target size/aspect if needed"],
+                    assumptions=["Center crop/pad is acceptable"],
+                ),
+                "image_data": [edited],
+                "references": [
+                    {"type": "tool_action", "value": action},
+                    {"type": "baseline", "value": oss_result.get("model", "oss")},
+                ],
+                "diagnostics": {"action": action, "open_source": oss_result},
+            }
+
+        if action == "generate_thumbnail":
+            image_input = action_payload.get("image_data") or action_payload.get("image")
+            mode = (action_payload.get("mode") or "crop").strip().lower()
+            if mode not in {"crop", "pad"}:
+                mode = "crop"
+            enhance = bool(action_payload.get("enhance", True))
+            oss_result = await asyncio.to_thread(
+                svc.generate_thumbnail_open_source,
+                image_input,
+                size,
+                mode=mode,
+                enhance=enhance,
+            )
+            oss_ok = oss_result.get("status") == "success"
+            edited = _extract_first_media_url_or_data_uri(oss_result) if oss_ok else None
+
+            if not oss_ok or not edited:
+                return {
+                    "type": "error",
+                    "message": _format_standard_reply(
+                        answer="Thumbnail creation failed.",
+                        actions=["Attempted open-source thumbnail generation"],
+                        next_steps=["Try a different image", "Try specifying an exact size like 1280x720"],
+                        assumptions=["The image data is valid"],
+                    ),
+                    "diagnostics": {"action": action, "open_source": oss_result},
+                }
+
+            return {
+                "type": "agent_response",
+                "agent": "OSS Image Edit",
+                "message": _format_standard_reply(
+                    answer=f"Created a thumbnail from your uploaded image ({size}).",
+                    actions=["Generated OSS thumbnail (crop/resize + enhancement)"],
+                    next_steps=["Download the image", "Tell me the exact target platform if you want a different aspect"],
+                    assumptions=["Center-crop thumbnail is acceptable"],
+                ),
+                "image_data": [edited],
+                "references": [
+                    {"type": "tool_action", "value": action},
+                    {"type": "baseline", "value": oss_result.get("model", "oss")},
+                ],
+                "diagnostics": {"action": action, "open_source": oss_result},
+            }
+
+        if action == "enhance_image":
+            image_input = action_payload.get("image_data") or action_payload.get("image")
+            strength = (action_payload.get("strength") or "auto").strip()
+            oss_result = await asyncio.to_thread(svc.enhance_image_open_source, image_input, strength=strength)
+            oss_ok = oss_result.get("status") == "success"
+            edited = _extract_first_media_url_or_data_uri(oss_result) if oss_ok else None
+
+            if not oss_ok or not edited:
+                return {
+                    "type": "error",
+                    "message": _format_standard_reply(
+                        answer="Image enhancement failed.",
+                        actions=["Attempted open-source enhancement"],
+                        next_steps=["Try a different image", "Try asking for 'denoise' or 'sharpen' explicitly"],
+                        assumptions=["The image data is valid"],
+                    ),
+                    "diagnostics": {"action": action, "open_source": oss_result},
+                }
+
+            return {
+                "type": "agent_response",
+                "agent": "OSS Image Edit",
+                "message": _format_standard_reply(
+                    answer="Enhanced your uploaded image (contrast/color/sharpness).",
+                    actions=["Ran OSS enhancement"],
+                    next_steps=["Download the image", "If you want more/less, say 'enhance strong' or 'enhance light'"],
+                    assumptions=["A light enhancement is desirable"],
+                ),
+                "image_data": [edited],
+                "references": [
+                    {"type": "tool_action", "value": action},
+                    {"type": "baseline", "value": oss_result.get("model", "oss")},
+                ],
+                "diagnostics": {"action": action, "open_source": oss_result},
+            }
+
         if action == "call_flux":
             # FLUX.2-pro (West US 3)
-            result = await asyncio.to_thread(svc.generate_image_flux2, prompt, size)
-            if result.get("status") != "success":
-                status_code = result.get("status_code")
-                hint = None
-                if status_code == 404:
-                    hint = (
-                        "404 Not Found usually means the deployment name or api-version doesn't match the endpoint. "
-                        "Verify the FLUX deployment exists in the target Foundry account and that AZURE_OPENAI_IMAGES_API_VERSION is supported."
+            image_input = action_payload.get("image_data") or action_payload.get("image")
+
+            def _run_oss_flux_baseline() -> Dict[str, Any]:
+                if image_input and (
+                    _looks_like_thumbnail_request(prompt)
+                    or _looks_like_transform_request(prompt)
+                    or _looks_like_enhance_request(prompt)
+                ):
+                    return svc.generate_thumbnail_open_source(image_input, size)
+                return svc.generate_image_open_source(prompt, size)
+
+            oss_task = (
+                asyncio.create_task(asyncio.to_thread(_run_oss_flux_baseline))
+                if include_oss
+                else None
+            )
+            async with _get_flux_semaphore():
+                flux_result = await asyncio.to_thread(svc.generate_image_flux2, prompt, size)
+            oss_result = (
+                (await oss_task)
+                if oss_task is not None
+                else {"status": "skipped", "model": "oss"}
+            )
+
+            flux_ok = flux_result.get("status") == "success"
+            oss_ok = include_oss and oss_result.get("status") == "success"
+
+            flux_image = _extract_first_media_url_or_data_uri(flux_result) if flux_ok else None
+            oss_image = _extract_first_media_url_or_data_uri(oss_result) if oss_ok else None
+
+            image_payload: Any = None
+            if include_oss:
+                labeled: list[dict] = []
+                if flux_image:
+                    labeled.append({"label": "LLM/Cloud output (FLUX.2-pro)", "src": flux_image})
+                if oss_image:
+                    labeled.append({"label": "Open-source output", "src": oss_image})
+                if len(labeled) == 1:
+                    image_payload = labeled[0]
+                elif len(labeled) > 1:
+                    image_payload = labeled
+            else:
+                flat: list[str] = []
+                if flux_image:
+                    flat.append(flux_image)
+                if len(flat) == 1:
+                    image_payload = flat[0]
+                elif len(flat) > 1:
+                    image_payload = flat
+
+            if not flux_ok and oss_ok:
+                message = _format_standard_reply(
+                    answer="The FLUX image generation request failed, but I generated an open-source baseline image.",
+                    actions=["Attempted image generation with FLUX.2-pro", "Generated baseline image using open-source backend"],
+                    next_steps=["Compare outputs", "Retry FLUX later"],
+                    assumptions=["Your prompt is valid and the open-source backend is reachable"],
+                )
+                if include_oss:
+                    message += (
+                        "\n\n---\n\n## Open-source output\n\n"
+                        f"- Backend: {oss_result.get('model', 'oss')}\n"
+                        "- Status: success\n"
+                        "- Note: This is a baseline result for comparison"
                     )
-                if status_code == 429:
-                    hint = (
-                        "429 RateLimitReached means the model is reachable but you've exceeded the call rate limit for the current tier/capacity. "
-                        "Wait and retry, reduce concurrent image requests, or increase capacity/request a quota increase for the deployment."
+                return {
+                    "type": "agent_response",
+                    "agent": "FLUX + OSS",
+                    "message": message,
+                    "image_data": image_payload,
+                    "references": [
+                        {"type": "tool_action", "value": action},
+                        {"type": "model", "value": "FLUX.2-pro"},
+                        *(
+                            [{"type": "baseline", "value": oss_result.get("model", "oss")}]
+                            if include_oss
+                            else []
+                        ),
+                        {"type": "prompt_chars", "value": len(prompt)},
+                    ],
+                    "explanation": (
+                        "High-level explanation (not internal chain-of-thought):\n"
+                        "1) I ran FLUX.2-pro and an open-source backend.\n"
+                        "2) FLUX failed, but the baseline succeeded.\n"
+                        "3) I returned the baseline image and included FLUX diagnostics."
                     )
+                    if wants_explain
+                    else None,
+                    "diagnostics": {"action": action, "flux": flux_result, "open_source": oss_result},
+                }
+
+            if not flux_ok:
+                status_code = flux_result.get("status_code")
                 message = _format_standard_reply(
                     answer="The FLUX image generation request failed.",
                     actions=["Attempted image generation with FLUX.2-pro"],
                     next_steps=[
                         "Retry the request",
-                        hint or "Verify the FLUX deployment and API version are configured correctly",
+                        "Check server diagnostics for details",
                     ],
                     assumptions=["Your prompt is valid and the model endpoint is reachable"],
                 )
@@ -400,7 +1201,7 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                         [
                             "I routed your request to the FLUX tool.",
                             f"The service returned HTTP {status_code} for image generation.",
-                            "This usually indicates endpoint, deployment, or API mismatch.",
+                            "Check diagnostics for endpoint/deployment configuration and transient failures.",
                         ],
                     )
                 return {
@@ -420,16 +1221,19 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                     )
                     if wants_explain
                     else None,
-                    "diagnostics": {"action": action, "result": result},
+                    "diagnostics": {"action": action, "flux": flux_result, "open_source": oss_result},
                 }
-            image_data = _extract_first_media_url_or_data_uri(result)
-            if not image_data:
+            if not flux_image:
                 message = _format_standard_reply(
                     answer="The FLUX request completed, but no image data was returned.",
                     actions=["Attempted image generation with FLUX.2-pro"],
                     next_steps=["Retry the request", "Check server diagnostics for the model response"],
                     assumptions=["The model response should include an image URL or data URI"],
                 )
+                if include_oss:
+                    message += "\n\n---\n\n## Open-source output\n\n- Status: " + (
+                        "success" if oss_ok else "unavailable"
+                    )
                 if wants_explain_answer:
                     message = _append_explain_answer_section(
                         message,
@@ -455,9 +1259,9 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                     )
                     if wants_explain
                     else None,
-                    "diagnostics": {"action": action, "result": result},
+                    "diagnostics": {"action": action, "flux": flux_result, "open_source": oss_result},
                 }
-            effective_size = ((result.get("request") or {}).get("size") or size)
+            effective_size = ((flux_result.get("request") or {}).get("size") or size)
             allowed_sizes = _allowed_image_sizes_from_env()
             size_note = ""
             if str(effective_size).strip() and str(size).strip() and str(effective_size).strip() != str(size).strip():
@@ -465,10 +1269,22 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
 
             message = _format_standard_reply(
                 answer=f"I generated an image from your prompt.{size_note}",
-                actions=["Generated image with FLUX.2-pro"],
-                next_steps=["Download the image", "Tell me if you want a different style or size"],
+                actions=["Generated image with FLUX.2-pro"]
+                + (["Generated baseline image using open-source backend"] if oss_ok else []),
+                next_steps=[
+                    "Download the image",
+                    "Compare against the open-source baseline"
+                    if oss_ok
+                    else "Tell me if you want a different style or size",
+                ],
                 assumptions=["Your prompt describes the desired thumbnail/image"],
             )
+            if include_oss:
+                message += (
+                    "\n\n---\n\n## Open-source output\n\n"
+                    + ("- Status: success\n" if oss_ok else "- Status: unavailable\n")
+                    + (f"- Backend: {oss_result.get('model', 'oss')}\n" if oss_ok else "")
+                )
             if wants_explain_answer:
                 message = _append_explain_answer_section(
                     message,
@@ -482,7 +1298,7 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                 "type": "agent_response",
                 "agent": "FLUX.2-pro",
                 "message": message,
-                "image_data": image_data,
+                "image_data": image_payload,
                 "references": [
                     {"type": "tool_action", "value": action},
                     {"type": "model", "value": "FLUX.2-pro"},
@@ -499,28 +1315,104 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                 else None,
                 "diagnostics": {
                     "action": action,
-                    "model": result.get("model"),
-                    "size": ((result.get("request") or {}).get("size") or size),
+                    "model": flux_result.get("model"),
+                    "size": ((flux_result.get("request") or {}).get("size") or size),
+                    "open_source": {"model": oss_result.get("model"), "status": oss_result.get("status")},
                 },
             }
 
         if action == "call_flux_kontext":
             # FLUX.1-Kontext-pro (Sweden Central)
-            result = await asyncio.to_thread(svc.generate_image_flux1, prompt, size)
-            if result.get("status") != "success":
-                status_code = result.get("status_code")
-                hint = None
-                if status_code == 404:
-                    hint = (
-                        "404 Not Found usually means the deployment name or api-version doesn't match the endpoint. "
-                        "Verify the FLUX deployment exists in the target Foundry account and that AZURE_OPENAI_IMAGES_API_VERSION is supported."
+            image_input = action_payload.get("image_data") or action_payload.get("image")
+
+            def _run_oss_kontext_baseline() -> Dict[str, Any]:
+                if image_input and (
+                    _looks_like_thumbnail_request(prompt)
+                    or _looks_like_transform_request(prompt)
+                    or _looks_like_enhance_request(prompt)
+                ):
+                    return svc.generate_thumbnail_open_source(image_input, size)
+                return svc.generate_image_open_source(prompt, size)
+
+            oss_task = (
+                asyncio.create_task(asyncio.to_thread(_run_oss_kontext_baseline))
+                if include_oss
+                else None
+            )
+            async with _get_flux_semaphore():
+                flux_result = await asyncio.to_thread(svc.generate_image_flux1, prompt, size)
+            oss_result = (
+                (await oss_task)
+                if oss_task is not None
+                else {"status": "skipped", "model": "oss"}
+            )
+
+            flux_ok = flux_result.get("status") == "success"
+            oss_ok = include_oss and oss_result.get("status") == "success"
+
+            flux_image = _extract_first_media_url_or_data_uri(flux_result) if flux_ok else None
+            oss_image = _extract_first_media_url_or_data_uri(oss_result) if oss_ok else None
+
+            image_payload: Any = None
+            if include_oss:
+                labeled: list[dict] = []
+                if flux_image:
+                    labeled.append({"label": "LLM/Cloud output (FLUX.1-Kontext-pro)", "src": flux_image})
+                if oss_image:
+                    labeled.append({"label": "Open-source output", "src": oss_image})
+                if len(labeled) == 1:
+                    image_payload = labeled[0]
+                elif len(labeled) > 1:
+                    image_payload = labeled
+            else:
+                flat: list[str] = []
+                if flux_image:
+                    flat.append(flux_image)
+                if len(flat) == 1:
+                    image_payload = flat[0]
+                elif len(flat) > 1:
+                    image_payload = flat
+
+            if not flux_ok and oss_ok:
+                message = _format_standard_reply(
+                    answer="The FLUX Kontext image generation request failed, but I generated an open-source baseline image.",
+                    actions=["Attempted image generation with FLUX.1-Kontext-pro", "Generated baseline image using open-source backend"],
+                    next_steps=["Compare outputs", "Retry FLUX Kontext later"],
+                    assumptions=["Your prompt is valid and the open-source backend is reachable"],
+                )
+                if include_oss:
+                    message += (
+                        "\n\n---\n\n## Open-source output\n\n"
+                        f"- Backend: {oss_result.get('model', 'oss')}\n"
+                        "- Status: success\n"
+                        "- Note: This is a baseline result for comparison"
                     )
+                return {
+                    "type": "agent_response",
+                    "agent": "FLUX Kontext + OSS",
+                    "message": message,
+                    "image_data": image_payload,
+                    "references": [
+                        {"type": "tool_action", "value": action},
+                        {"type": "model", "value": "FLUX.1-Kontext-pro"},
+                        *(
+                            [{"type": "baseline", "value": oss_result.get("model", "oss")}]
+                            if include_oss
+                            else []
+                        ),
+                        {"type": "prompt_chars", "value": len(prompt)},
+                    ],
+                    "diagnostics": {"action": action, "flux": flux_result, "open_source": oss_result},
+                }
+
+            if not flux_ok:
+                status_code = flux_result.get("status_code")
                 message = _format_standard_reply(
                     answer="The FLUX Kontext image generation request failed.",
                     actions=["Attempted image generation with FLUX.1-Kontext-pro"],
                     next_steps=[
                         "Retry the request",
-                        hint or "Verify the FLUX deployment and API version are configured correctly",
+                        "Check server diagnostics for details",
                     ],
                     assumptions=["Your prompt is valid and the model endpoint is reachable"],
                 )
@@ -530,7 +1422,7 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                         [
                             "I routed your request to the FLUX Kontext tool.",
                             f"The service returned HTTP {status_code} for image generation.",
-                            "This usually indicates endpoint, deployment, or API mismatch.",
+                            "Check diagnostics for endpoint/deployment configuration and transient failures.",
                         ],
                     )
                 return {
@@ -550,16 +1442,19 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                     )
                     if wants_explain
                     else None,
-                    "diagnostics": {"action": action, "result": result},
+                    "diagnostics": {"action": action, "flux": flux_result, "open_source": oss_result},
                 }
-            image_data = _extract_first_media_url_or_data_uri(result)
-            if not image_data:
+            if not flux_image:
                 message = _format_standard_reply(
                     answer="The FLUX Kontext request completed, but no image data was returned.",
                     actions=["Attempted image generation with FLUX.1-Kontext-pro"],
                     next_steps=["Retry the request", "Check server diagnostics for the model response"],
                     assumptions=["The model response should include an image URL or data URI"],
                 )
+                if include_oss:
+                    message += "\n\n---\n\n## Open-source output\n\n- Status: " + (
+                        "success" if oss_ok else "unavailable"
+                    )
                 if wants_explain_answer:
                     message = _append_explain_answer_section(
                         message,
@@ -585,9 +1480,9 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                     )
                     if wants_explain
                     else None,
-                    "diagnostics": {"action": action, "result": result},
+                    "diagnostics": {"action": action, "flux": flux_result, "open_source": oss_result},
                 }
-            effective_size = ((result.get("request") or {}).get("size") or size)
+            effective_size = ((flux_result.get("request") or {}).get("size") or size)
             allowed_sizes = _allowed_image_sizes_from_env()
             size_note = ""
             if str(effective_size).strip() and str(size).strip() and str(effective_size).strip() != str(size).strip():
@@ -595,10 +1490,16 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
 
             message = _format_standard_reply(
                 answer=f"I generated an image from your prompt.{size_note}",
-                actions=["Generated image with FLUX.1-Kontext-pro"],
-                next_steps=["Download the image", "Tell me if you want a different style or size"],
+                actions=["Generated image with FLUX.1-Kontext-pro"] + (["Generated baseline image using open-source backend"] if oss_ok else []),
+                next_steps=["Download the image", "Compare against the open-source baseline" if oss_ok else "Tell me if you want a different style or size"],
                 assumptions=["Your prompt describes the desired thumbnail/image"],
             )
+            if include_oss:
+                message += (
+                    "\n\n---\n\n## Open-source output\n\n"
+                    + ("- Status: success\n" if oss_ok else "- Status: unavailable\n")
+                    + (f"- Backend: {oss_result.get('model', 'oss')}\n" if oss_ok else "")
+                )
             if wants_explain_answer:
                 message = _append_explain_answer_section(
                     message,
@@ -612,7 +1513,7 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                 "type": "agent_response",
                 "agent": "FLUX.1-Kontext-pro",
                 "message": message,
-                "image_data": image_data,
+                "image_data": image_payload,
                 "references": [
                     {"type": "tool_action", "value": action},
                     {"type": "model", "value": "FLUX.1-Kontext-pro"},
@@ -629,32 +1530,88 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                 else None,
                 "diagnostics": {
                     "action": action,
-                    "model": result.get("model"),
-                    "size": ((result.get("request") or {}).get("size") or size),
+                    "model": flux_result.get("model"),
+                    "size": ((flux_result.get("request") or {}).get("size") or size),
+                    "open_source": {"model": oss_result.get("model"), "status": oss_result.get("status")},
                 },
             }
 
         if action == "call_sora":
             # Sora video generation (v1 async jobs + mp4 content download)
-            resolved_duration = 10
-            if isinstance(duration, (int, float)) and duration > 0:
-                resolved_duration = int(duration)
-            result = await asyncio.to_thread(svc.generate_video_sora, prompt, resolved_duration, resolution)
+            resolved_duration = _normalize_video_duration_seconds(
+                int(duration) if isinstance(duration, (int, float)) else _infer_video_duration_seconds_from_prompt(prompt),
+                default=3,
+            )
 
-            if result.get("status") != "success":
-                hint = None
-                if result.get("status_code") == 404:
-                    hint = (
-                        "404 Not Found for Sora usually means the Sora deployment doesn't exist in that Foundry hub, "
-                        "or the request is hitting the wrong endpoint/api-version. Verify the 'sora' deployment exists "
-                        "and AZURE_OPENAI_SORA_API_VERSION is set to 'preview'."
-                    )
+            oss_task = (
+                asyncio.create_task(
+                    asyncio.to_thread(svc.generate_video_open_source, prompt, resolved_duration, resolution)
+                )
+                if include_oss
+                else None
+            )
+            result = await asyncio.to_thread(svc.generate_video_sora, prompt, resolved_duration, resolution)
+            oss_result = (
+                (await oss_task)
+                if oss_task is not None
+                else {"status": "skipped", "model": "oss:video"}
+            )
+
+            sora_ok = result.get("status") == "success"
+            oss_ok = include_oss and oss_result.get("status") == "success"
+
+            if not sora_ok and oss_ok:
+                # Save OSS video (if bytes) to /static so the UI can download/play it.
+                oss_video_url = None
+                oss_bytes = oss_result.get("content_bytes")
+                if isinstance(oss_bytes, (bytes, bytearray)) and oss_bytes:
+                    oss_filename = f"oss_video_{uuid.uuid4().hex}.mp4"
+                    oss_output_path = Path(static_dir) / oss_filename
+                    oss_output_path.write_bytes(bytes(oss_bytes))
+                    oss_video_url = f"/static/{oss_filename}"
+                else:
+                    oss_video_url = oss_result.get("video_url")
+
                 message = _format_standard_reply(
-                    answer="The Sora video generation request failed." if not hint else f"The Sora video generation request failed. {hint}",
+                    answer="The Sora request failed, but I generated an open-source baseline video you can play/download below.",
+                    actions=["Attempted video generation with Sora", "Generated baseline video using open-source backend"],
+                    next_steps=["Compare outputs", "Retry Sora later"],
+                    assumptions=["Your prompt is valid and the open-source backend is reachable"],
+                )
+                if include_oss:
+                    message += (
+                        "\n\n---\n\n## Open-source output\n\n"
+                        f"- Backend: {oss_result.get('model', 'oss:video')}\n"
+                        "- Status: success\n"
+                        "- Note: This is a baseline result for comparison"
+                    )
+                return {
+                    "type": "agent_response",
+                    "agent": "Sora + OSS",
+                    "message": message,
+                    "video_url": {"label": "Open-source output", "src": oss_video_url} if oss_video_url else None,
+                    "references": [
+                        {"type": "tool_action", "value": action},
+                        {"type": "model", "value": "sora"},
+                        {"type": "baseline", "value": oss_result.get("model", "oss:video")},
+                        {"type": "prompt_chars", "value": len(prompt)},
+                    ],
+                    "diagnostics": {"action": action, "sora": result, "open_source": oss_result},
+                }
+
+            if not sora_ok:
+                message = _format_standard_reply(
+                    answer="The Sora video generation request failed.",
                     actions=["Attempted video generation with Sora"],
                     next_steps=["Retry the request", "Check server diagnostics for the model response"],
                     assumptions=["Your prompt is valid and the model endpoint is reachable"],
                 )
+                if include_oss:
+                    oss_status = (oss_result or {}).get("status") or ("success" if oss_ok else "unavailable")
+                    message += "\n\n---\n\n## Open-source output\n\n- Status: " + str(oss_status)
+                    oss_error = (oss_result or {}).get("error")
+                    if oss_error:
+                        message += "\n- Error: " + str(oss_error)
                 if wants_explain_answer:
                     status_code = result.get("status_code")
                     message = _append_explain_answer_section(
@@ -682,7 +1639,7 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                     )
                     if wants_explain
                     else None,
-                    "diagnostics": {"action": action, "result": result},
+                    "diagnostics": {"action": action, "sora": result, "open_source": oss_result},
                 }
 
             content_bytes = result.get("content_bytes")
@@ -727,12 +1684,32 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
             output_path.write_bytes(bytes(content_bytes))
             video_url = f"/static/{filename}"
 
+            oss_video_url = None
+            if oss_ok:
+                oss_bytes = oss_result.get("content_bytes")
+                if isinstance(oss_bytes, (bytes, bytearray)) and oss_bytes:
+                    oss_filename = f"oss_video_{uuid.uuid4().hex}.mp4"
+                    oss_output_path = Path(static_dir) / oss_filename
+                    oss_output_path.write_bytes(bytes(oss_bytes))
+                    oss_video_url = f"/static/{oss_filename}"
+                else:
+                    oss_video_url = oss_result.get("video_url")
+
             message = _format_standard_reply(
-                answer=f"I generated a video and saved it to: {video_url}",
-                actions=["Generated video with Sora", f"Saved artifact to {video_url}"],
-                next_steps=["Play or download the video", "Ask for a different duration or style"],
+                answer=f"I generated a {resolved_duration}-second video. You can play it and download it below.",
+                actions=["Generated video with Sora", "Saved artifact to /static for playback/download"],
+                next_steps=["Play or download the video", "Ask for a different duration, resolution, or style"],
                 assumptions=["Your prompt describes the desired motion/scene"],
             )
+            if include_oss:
+                oss_status = (oss_result or {}).get("status") or ("success" if oss_ok else "unavailable")
+                oss_error = (oss_result or {}).get("error")
+                message += (
+                    "\n\n---\n\n## Open-source output\n\n"
+                    + (f"- Status: {oss_status}\n")
+                    + (f"- Backend: {(oss_result or {}).get('model', 'oss:video')}\n")
+                    + (f"- Error: {oss_error}\n" if oss_error else "")
+                )
             if wants_explain_answer:
                 message = _append_explain_answer_section(
                     message,
@@ -743,16 +1720,26 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                     ],
                 )
 
+            video_payload: Any = video_url
+            if include_oss:
+                labeled_videos: list[dict] = [{"label": "LLM/Cloud output (Sora)", "src": video_url}]
+                if oss_video_url and oss_video_url != video_url:
+                    labeled_videos.append({"label": "Open-source output", "src": oss_video_url})
+                video_payload = labeled_videos[0] if len(labeled_videos) == 1 else labeled_videos
+            elif oss_video_url and oss_video_url != video_url:
+                video_payload = [video_url, oss_video_url]
+
             return {
                 "type": "agent_response",
                 "agent": "Sora",
                 "message": message,
-                "video_url": video_url,
+                "video_url": video_payload,
                 "references": [
                     {"type": "tool_action", "value": action},
                     {"type": "model", "value": "sora"},
                     {"type": "prompt_chars", "value": len(prompt)},
                     {"type": "artifact", "value": "video_url"},
+                    {"type": "artifact_path", "value": video_url},
                 ],
                 "explanation": (
                     "High-level explanation (not internal chain-of-thought):\n"
@@ -769,6 +1756,7 @@ async def _handle_action(action_payload: Dict[str, Any]) -> Dict[str, Any]:
                     "duration": resolved_duration,
                     "job_id": result.get("job_id"),
                     "generation_id": result.get("generation_id"),
+                    "open_source": {"model": oss_result.get("model"), "status": oss_result.get("status")},
                 },
             }
 
@@ -918,6 +1906,9 @@ async def websocket_endpoint(websocket: WebSocket):
         
         with tracer.start_as_current_span("websocket_session") as span:
             span.set_attribute("connection_id", connection_id)
+
+            pending_media_action: Optional[Dict[str, Any]] = None
+            pending_media_questions: Optional[list[str]] = None
             
             while True:
                 try:
@@ -934,6 +1925,56 @@ async def websocket_endpoint(websocket: WebSocket):
                     wants_stream = bool(message_data.get("stream", False))
                     wants_explain = bool(message_data.get("explain", False))
                     wants_explain_answer = bool(message_data.get("explain_answer", False))
+                    include_oss = bool(message_data.get("include_oss", True))
+
+                    # If we previously asked clarifying questions for a media generation request,
+                    # treat the next user message as clarifications (unless they send a new action).
+                    if pending_media_action and isinstance(user_message, str) and user_message.strip():
+                        lowered = user_message.strip().lower()
+                        if any(k in lowered for k in ["cancel", "never mind", "nevermind", "stop"]):
+                            pending_media_action = None
+                            pending_media_questions = None
+                            await websocket.send_text(
+                                fast_json_dumps(
+                                    {
+                                        "type": "agent_response",
+                                        "agent": "System",
+                                        "message": _format_standard_reply(
+                                            answer="Okay — canceled the pending image/video generation.",
+                                            actions=["Canceled pending clarification"],
+                                            next_steps=["Send a new prompt when ready"],
+                                            assumptions=["You want to start over"],
+                                        ),
+                                    }
+                                )
+                            )
+                            continue
+
+                        # Allow skipping clarifications.
+                        if any(k in lowered for k in ["just generate", "skip", "no preference", "surprise me"]):
+                            action_payload = pending_media_action
+                            pending_media_action = None
+                            pending_media_questions = None
+                            action_payload.setdefault("include_oss", include_oss)
+                            action_payload.setdefault("explain", wants_explain)
+                            action_payload.setdefault("explain_answer", wants_explain_answer)
+                            action_response = await _handle_action(action_payload)
+                            await websocket.send_text(fast_json_dumps(action_response))
+                            continue
+
+                        # Use the user's message as clarifications and proceed.
+                        action_payload = pending_media_action
+                        pending_media_action = None
+                        pending_media_questions = None
+                        base_prompt = str(action_payload.get("prompt") or "").strip()
+                        clar = user_message.strip()
+                        action_payload["prompt"] = f"{base_prompt}\n\nUser clarifications: {clar}".strip()
+                        action_payload.setdefault("include_oss", include_oss)
+                        action_payload.setdefault("explain", wants_explain)
+                        action_payload.setdefault("explain_answer", wants_explain_answer)
+                        action_response = await _handle_action(action_payload)
+                        await websocket.send_text(fast_json_dumps(action_response))
+                        continue
 
                     # If the UI uploaded a file and is only sending metadata, map it into the existing
                     # routing paths (image analysis uses image_url; docs are extracted server-side).
@@ -982,6 +2023,59 @@ async def websocket_endpoint(websocket: WebSocket):
                         action_payload = dict(message_data)
                         action_payload.setdefault("explain", wants_explain)
                         action_payload.setdefault("explain_answer", wants_explain_answer)
+                        action_payload.setdefault("include_oss", include_oss)
+
+                        # If a media generation request is underspecified, ask clarifying questions first.
+                        try:
+                            action_name = str(action_payload.get("action") or "").strip()
+                            if action_name in {"call_flux", "call_flux_kontext", "call_sora"}:
+                                if _should_prompt_for_media_clarifications(
+                                    action=action_name,
+                                    user_text=user_message if isinstance(user_message, str) else None,
+                                    action_payload=action_payload,
+                                ):
+                                    qs = _infer_prompt_clarifying_questions(
+                                        action=action_name,
+                                        prompt=str(action_payload.get("prompt") or ""),
+                                        action_payload=action_payload,
+                                    )
+                                    if qs:
+                                        pending_media_action = action_payload
+                                        pending_media_questions = qs
+                                        msg = "To generate a more accurate result, quick questions:\n" + "\n".join(
+                                            [f"{i+1}) {q}" for i, q in enumerate(qs)]
+                                        )
+                                        msg += "\n\nReply with your answers in one message (or say 'just generate' to skip)."
+                                        await websocket.send_text(
+                                            fast_json_dumps(
+                                                {
+                                                    "type": "agent_response",
+                                                    "agent": "System",
+                                                    "message": msg,
+                                                    "diagnostics": {"clarification": {"action": action_name, "questions": qs}},
+                                                }
+                                            )
+                                        )
+                                        continue
+                        except Exception:
+                            pass
+
+                        # If an image is attached in the UI payload, allow action payloads to
+                        # omit image_data/image and still operate on the attachment.
+                        try:
+                            action_name = str(action_payload.get("action") or "").strip()
+                            if action_name in {
+                                "remove_background",
+                                "blur_background",
+                                "blur_faces",
+                                "apply_filter",
+                                "transform_image",
+                            } and not (action_payload.get("image_data") or action_payload.get("image")):
+                                if image_data:
+                                    action_payload["image_data"] = image_data
+                        except Exception:
+                            pass
+
                         action_response = await _handle_action(action_payload)
                         await websocket.send_text(fast_json_dumps(action_response))
                         continue
@@ -993,6 +2087,24 @@ async def websocket_endpoint(websocket: WebSocket):
                             logger.info(f"[{connection_id}] Handling action from user message: {parsed_action.get('action')}")
                             parsed_action.setdefault("explain", wants_explain)
                             parsed_action.setdefault("explain_answer", wants_explain_answer)
+                            parsed_action.setdefault("include_oss", include_oss)
+
+                            # Same convenience: if the user typed an action JSON but also attached
+                            # an image via the UI, auto-wire the attachment into the action.
+                            try:
+                                action_name = str(parsed_action.get("action") or "").strip()
+                                if action_name in {
+                                    "remove_background",
+                                    "blur_background",
+                                    "blur_faces",
+                                    "apply_filter",
+                                    "transform_image",
+                                } and not (parsed_action.get("image_data") or parsed_action.get("image")):
+                                    if image_data:
+                                        parsed_action["image_data"] = image_data
+                            except Exception:
+                                pass
+
                             action_response = await _handle_action(parsed_action)
                             await websocket.send_text(fast_json_dumps(action_response))
                             continue
@@ -1029,9 +2141,162 @@ async def websocket_endpoint(websocket: WebSocket):
                             )
                             inferred_action.setdefault("explain", wants_explain)
                             inferred_action.setdefault("explain_answer", wants_explain_answer)
+                            inferred_action.setdefault("include_oss", include_oss)
+
+                            # Ask clarifying questions before generating media if needed.
+                            try:
+                                action_name = str(inferred_action.get("action") or "").strip()
+                                if action_name in {"call_flux", "call_flux_kontext", "call_sora"}:
+                                    if _should_prompt_for_media_clarifications(
+                                        action=action_name,
+                                        user_text=user_message,
+                                        action_payload=inferred_action,
+                                    ):
+                                        qs = _infer_prompt_clarifying_questions(
+                                            action=action_name,
+                                            prompt=str(inferred_action.get("prompt") or ""),
+                                            action_payload=inferred_action,
+                                        )
+                                        if qs:
+                                            pending_media_action = inferred_action
+                                            pending_media_questions = qs
+                                            msg = "To generate a more accurate result, quick questions:\n" + "\n".join(
+                                                [f"{i+1}) {q}" for i, q in enumerate(qs)]
+                                            )
+                                            msg += "\n\nReply with your answers in one message (or say 'just generate' to skip)."
+                                            await websocket.send_text(
+                                                fast_json_dumps(
+                                                    {
+                                                        "type": "agent_response",
+                                                        "agent": "System",
+                                                        "message": msg,
+                                                        "diagnostics": {"clarification": {"action": action_name, "questions": qs}},
+                                                    }
+                                                )
+                                            )
+                                            continue
+                            except Exception:
+                                pass
+
                             action_response = await _handle_action(inferred_action)
                             await websocket.send_text(fast_json_dumps(action_response))
                             continue
+
+                        # Local OSS image edit routing: "remove background" for an attached image.
+                        # Do this before Vision analysis so the user sees an actual edited image.
+                        if include_oss and image_data and isinstance(image_data, str) and image_data.strip() and isinstance(user_message, str):
+                            if _looks_like_thumbnail_request(user_message):
+                                transform_args = _infer_transform_args(user_message)
+                                action_payload = {
+                                    "action": "generate_thumbnail",
+                                    "image_data": image_data,
+                                    "prompt": user_message,
+                                    "include_oss": True,
+                                    "explain": wants_explain,
+                                    "explain_answer": wants_explain_answer,
+                                    "size": _infer_thumbnail_size(user_message),
+                                    "mode": transform_args.get("mode", "crop"),
+                                    "enhance": True,
+                                }
+                                action_response = await _handle_action(action_payload)
+                                await websocket.send_text(fast_json_dumps(action_response))
+                                continue
+
+                            if _looks_like_enhance_request(user_message):
+                                strength = "auto"
+                                lowered = user_message.lower()
+                                if any(k in lowered for k in ["strong", "more", "extra"]):
+                                    strength = "strong"
+                                elif any(k in lowered for k in ["light", "subtle", "less"]):
+                                    strength = "light"
+
+                                action_response = await _handle_action(
+                                    {
+                                        "action": "enhance_image",
+                                        "image_data": image_data,
+                                        "prompt": user_message,
+                                        "strength": strength,
+                                        "include_oss": True,
+                                        "explain": wants_explain,
+                                        "explain_answer": wants_explain_answer,
+                                    }
+                                )
+                                await websocket.send_text(fast_json_dumps(action_response))
+                                continue
+
+                            if _looks_like_background_removal_request(user_message):
+                                action_response = await _handle_action(
+                                    {
+                                        "action": "remove_background",
+                                        "image_data": image_data,
+                                        "prompt": user_message,
+                                        "include_oss": True,
+                                        "explain": wants_explain,
+                                        "explain_answer": wants_explain_answer,
+                                    }
+                                )
+                                await websocket.send_text(fast_json_dumps(action_response))
+                                continue
+
+                            if _looks_like_blur_background_request(user_message):
+                                action_response = await _handle_action(
+                                    {
+                                        "action": "blur_background",
+                                        "image_data": image_data,
+                                        "prompt": user_message,
+                                        "include_oss": True,
+                                        "explain": wants_explain,
+                                        "explain_answer": wants_explain_answer,
+                                    }
+                                )
+                                await websocket.send_text(fast_json_dumps(action_response))
+                                continue
+
+                            if _looks_like_blur_faces_request(user_message):
+                                action_response = await _handle_action(
+                                    {
+                                        "action": "blur_faces",
+                                        "image_data": image_data,
+                                        "prompt": user_message,
+                                        "include_oss": True,
+                                        "explain": wants_explain,
+                                        "explain_answer": wants_explain_answer,
+                                    }
+                                )
+                                await websocket.send_text(fast_json_dumps(action_response))
+                                continue
+
+                            filter_name = _infer_filter_name(user_message)
+                            if filter_name and _looks_like_filter_request(user_message):
+                                action_response = await _handle_action(
+                                    {
+                                        "action": "apply_filter",
+                                        "image_data": image_data,
+                                        "prompt": user_message,
+                                        "filter": filter_name,
+                                        "include_oss": True,
+                                        "explain": wants_explain,
+                                        "explain_answer": wants_explain_answer,
+                                    }
+                                )
+                                await websocket.send_text(fast_json_dumps(action_response))
+                                continue
+
+                            if _looks_like_transform_request(user_message):
+                                transform_args = _infer_transform_args(user_message)
+                                if transform_args:
+                                    action_payload = {
+                                        "action": "transform_image",
+                                        "image_data": image_data,
+                                        "prompt": user_message,
+                                        "include_oss": True,
+                                        "explain": wants_explain,
+                                        "explain_answer": wants_explain_answer,
+                                    }
+                                    action_payload.update(transform_args)
+                                    action_response = await _handle_action(action_payload)
+                                    await websocket.send_text(fast_json_dumps(action_response))
+                                    continue
 
                     # If an image is attached, route to GPT-4o Vision for analysis by default.
                     # Do not intercept explicit generation requests (those are handled above).
@@ -1301,11 +2566,17 @@ async def websocket_endpoint(websocket: WebSocket):
                             # Extract response from agent
                             response_text = result_text
 
-                            # If the agent responded with an action payload, execute it
+                            # If the agent responded with an action payload, execute it immediately
+                            # so parsing remains reliable and the UI can render the returned artifacts.
                             if isinstance(response_text, str):
                                 parsed_action = _try_parse_action_dict(response_text)
                                 if parsed_action:
-                                    logger.info(f"[{connection_id}] Handling action from agent response: {parsed_action.get('action')}")
+                                    logger.info(
+                                        f"[{connection_id}] Handling action from agent response: {parsed_action.get('action')}"
+                                    )
+                                    parsed_action.setdefault("explain", wants_explain)
+                                    parsed_action.setdefault("explain_answer", wants_explain_answer)
+                                    parsed_action.setdefault("include_oss", include_oss)
                                     action_response = await _handle_action(parsed_action)
                                     await websocket.send_text(fast_json_dumps(action_response))
                                     continue
@@ -1348,10 +2619,8 @@ async def websocket_endpoint(websocket: WebSocket):
                                     "\nIf you want a content-focused explanation too, ask for 'Explain the answer in 3 bullets'."
                                 )
 
-                            # If we streamed deltas, the client already has the full text.
-                            # Only include the final message body for non-streaming clients.
-                            if not (wants_stream and streamed_any_delta):
-                                response["message"] = response_text
+                            # Always include the final message body, even when deltas were streamed.
+                            response["message"] = response_text
                             
                             logger.info(f"[{connection_id}] Sending response: {response_text[:100]}...")
                             await websocket.send_text(fast_json_dumps(response))
