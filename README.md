@@ -69,6 +69,7 @@ Last updated: 2026-01-20
 - **Code-Based Orchestration** for generation tasks:
   - **Video Generation**: Direct calls to `Sora` (Sweden Central). ~ `Video generation model (not used by agents, called directly via code)`
   - **Image Generation**: Direct calls to `FLUX.1-Kontext-pro` (Sweden Central) and `FLUX.2-pro` (East US) ~ `Image generation model (not used by agents, called directly via code)`.
+- **OSS Baseline (Open-Source)**: Includes an in-app OSS baseline with optional Diffusers worker on Azure (AKS or `oss_azure_worker_url_override`) for more realistic output with open source libraries.
 - **Real-Time Image Processing**: Upload or paste images directly into the chat for immediate agent action
 - **Real MSFT Foundry Agents**: Integrates with **MSFT Foundry** to create and host persistent agents across multiple projects
 - **Zero-Touch Deployment**: A single [terraform apply](./terraform-infrastructure/README.md) command handles the entire lifecycle
